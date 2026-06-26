@@ -1,0 +1,34 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+.env
+
+# Certs — never commit private CA keys
+*.pem
+*.key
+*.cer
+*.crt
+
+# Audit logs
+audit.jsonl
+*.jsonl
+
+# Daemon
+*.pid
+
+# IDE
+.vscode/
+.idea/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy
+.mypy_cache/

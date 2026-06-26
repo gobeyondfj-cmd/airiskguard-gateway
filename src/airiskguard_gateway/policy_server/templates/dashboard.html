@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — AIRiskGuard Gateway{% endblock %}
+{% block content %}
+
+<div class="mb-8">
+    <h1 class="text-2xl font-bold text-white mb-1">Dashboard</h1>
+    <p class="text-sm" style="color:#7d8fa8">Last 24 hours · auto-refreshes every 30s</p>
+</div>
+
+<!-- Stats cards (HTMX auto-refresh) -->
+<div id="stats-cards"
+     hx-get="/dashboard/stats"
+     hx-trigger="every 30s"
+     hx-swap="outerHTML"
+     class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    {% include "stats_cards.html" %}
+</div>
+
+<!-- Recent violations -->
+<div class="card p-6">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="font-semibold text-white">Recent Events</h2>
+        <div class="flex gap-2 text-xs">
+            <button hx-get="/dashboard/violations" hx-target="#violations-table" hx-swap="innerHTML"
+                    class="px-3 py-1 rounded-full border border-cyan-900/50 text-cyan-400 hover:border-cyan-400 transition-colors">
+                All
+            </button>
+            <button hx-get="/dashboard/violations?action=blocked" hx-target="#violations-table" hx-swap="innerHTML"
+                    class="px-3 py-1 rounded-full border border-red-900/50 text-red-400 hover:border-red-400 transition-colors">
+                Blocked only
+            </button>
+        </div>
+    </div>
+    <div id="violations-table"
+         hx-get="/dashboard/violations"
+         hx-trigger="every 30s"
+         hx-swap="innerHTML">
+        {% include "violations.html" %}
+    </div>
+</div>
+
+<!-- Teams -->
+{% if teams %}
+<div class="card p-6 mt-6">
+    <h2 class="font-semibold text-white mb-4">Teams</h2>
+    <div class="grid gap-3">
+        {% for team in teams %}
+        <div class="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+            <div>
+                <span class="text-white font-medium">{{ team.name }}</span>
+                <span class="text-xs ml-2" style="color:#7d8fa8">{{ team.slug }}</span>
+            </div>
+            <span class="text-xs" style="color:#7d8fa8">{{ team.created_at.strftime('%Y-%m-%d') }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}AIRiskGuard Gateway{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        :root { --cyan: #00d4ff; }
+        body { background: #050a14; color: #e2e8f0; font-family: system-ui, sans-serif; }
+        .card { background: rgba(255,255,255,0.03); border: 1px solid rgba(0,212,255,0.15); border-radius: 12px; }
+        .badge-blocked { background: rgba(220,38,38,0.15); color: #f87171; border: 1px solid rgba(220,38,38,0.3); }
+        .badge-allowed { background: rgba(22,163,74,0.1); color: #4ade80; border: 1px solid rgba(22,163,74,0.2); }
+        .badge-redacted { background: rgba(234,88,12,0.15); color: #fb923c; border: 1px solid rgba(234,88,12,0.3); }
+        .nav-link { color: #7d8fa8; transition: color 0.2s; }
+        .nav-link:hover { color: #00d4ff; }
+        .htmx-indicator { opacity: 0; transition: opacity 0.2s; }
+        .htmx-request .htmx-indicator { opacity: 1; }
+    </style>
+</head>
+<body>
+<nav class="border-b border-cyan-900/30 px-6 py-4 flex items-center justify-between sticky top-0 z-10" style="background:rgba(5,10,20,0.9);backdrop-filter:blur(12px)">
+    <a href="/dashboard" class="flex items-center gap-2 font-bold text-white">
+        <span class="w-7 h-7 rounded-md flex items-center justify-center text-xs font-bold" style="background:linear-gradient(135deg,#00d4ff,#7c3aed)">◆</span>
+        AIRiskGuard <span class="text-cyan-400 font-normal text-sm ml-1">Gateway</span>
+    </a>
+    <div class="flex gap-6 text-sm">
+        <a href="/dashboard" class="nav-link">Dashboard</a>
+        <a href="/dashboard/violations" class="nav-link">Violations</a>
+        <a href="/docs" class="nav-link">API Docs</a>
+    </div>
+</nav>
+<main class="max-w-6xl mx-auto px-6 py-8">
+    {% block content %}{% endblock %}
+</main>
+</body>
+</html>

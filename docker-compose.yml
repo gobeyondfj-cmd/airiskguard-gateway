@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: airiskguard
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  policy-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.policy-server
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/airiskguard
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src  # Hot reload in dev
+
+volumes:
+  pg_data:
