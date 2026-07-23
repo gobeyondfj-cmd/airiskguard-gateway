@@ -19,7 +19,7 @@ class AuditEvent:
         "event_id", "timestamp", "machine_id", "provider", "model",
         "direction", "action_taken", "findings", "request_id",
         "input_tokens", "output_tokens", "cost_usd", "latency_ms",
-        "routed_to",
+        "routed_to", "session_id", "task_type", "complexity",
     )
 
     def __init__(
@@ -36,6 +36,9 @@ class AuditEvent:
         cost_usd: float | None = None,
         latency_ms: int | None = None,
         routed_to: str | None = None,
+        session_id: str | None = None,
+        task_type: str | None = None,
+        complexity: str | None = None,
     ) -> None:
         self.event_id = str(uuid.uuid4())
         self.timestamp = datetime.now(UTC)
@@ -51,6 +54,9 @@ class AuditEvent:
         self.cost_usd = cost_usd
         self.latency_ms = latency_ms
         self.routed_to = routed_to
+        self.session_id = session_id
+        self.task_type = task_type
+        self.complexity = complexity
 
     def to_dict(self) -> dict:
         return {
@@ -68,6 +74,9 @@ class AuditEvent:
             "cost_usd": self.cost_usd,
             "latency_ms": self.latency_ms,
             "routed_to": self.routed_to,
+            "session_id": self.session_id,
+            "task_type": self.task_type,
+            "complexity": self.complexity,
         }
 
 

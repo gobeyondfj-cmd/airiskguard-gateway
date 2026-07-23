@@ -117,6 +117,8 @@ BUILTIN_PROVIDERS: dict[str, dict] = {
 class RoutingConfig(BaseModel):
     rules: list[dict] = Field(default_factory=list)
     destinations: dict[str, dict] = Field(default_factory=dict)
+    sticky_sessions: bool = True
+    session_ttl_hours: int = 24
 
     def parsed_rules(self) -> list[RoutingRule]:
         return [RoutingRule(**r) for r in self.rules]

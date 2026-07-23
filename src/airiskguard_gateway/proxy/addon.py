@@ -91,8 +91,9 @@ class AIRiskGuardAddon:
             self._log_event(ctx, "outbound", "redacted", findings, request_id)
             return
 
-        # 3. Routing
-        routing_decision = self._router.evaluate(ctx, findings)
+        # 3. Routing — pass session ID for stickiness
+        session_id = _extract_session_id(body, flow.request.headers)
+        routing_decision = self._router.evaluate(ctx, findings, session_id=session_id)
 
         if routing_decision.action == "block":
             block_finding = Finding(
@@ -115,11 +116,19 @@ class AIRiskGuardAddon:
             dest = routing_decision.destination
             self._rewrite_for_destination(flow, body, dest)
             routed_to = f"{dest.provider}:{dest.model}"
-            log.info("Routed %s → %s", ctx.model, routed_to)
+            log.info("Routed %s → %s%s", ctx.model, routed_to,
+                     " [pinned]" if routing_decision.session_pinned else "")
+
+        # Classify content for audit log
+        from airiskguard_gateway.routing.classifier import classify
+        signals = classify(ctx.prompt_text)
 
         self._log_event(ctx, "outbound",
                         "routed" if routed_to else "allowed",
-                        findings, request_id, routed_to=routed_to)
+                        findings, request_id, routed_to=routed_to,
+                        session_id=session_id,
+                        task_type=signals.task_type.value,
+                        complexity=signals.complexity.value)
 
     def response(self, flow: HTTPFlow) -> None:
         host = flow.request.pretty_host
@@ -264,13 +273,16 @@ class AIRiskGuardAddon:
         cost_usd: float | None = None,
         latency_ms: int | None = None,
         routed_to: str | None = None,
+        session_id: str | None = None,
+        task_type: str | None = None,
+        complexity: str | None = None,
     ) -> None:
         event = AuditEvent(
             machine_id=self._mid,
             provider=ctx.provider_name,
             model=ctx.model,
-            direction=direction,       # type: ignore
-            action_taken=action_taken, # type: ignore
+            direction=direction,
+            action_taken=action_taken,
             findings=findings,
             request_id=request_id,
             input_tokens=input_tokens or None,
@@ -278,6 +290,9 @@ class AIRiskGuardAddon:
             cost_usd=cost_usd,
             latency_ms=latency_ms,
             routed_to=routed_to,
+            session_id=session_id,
+            task_type=task_type,
+            complexity=complexity,
         )
         try:
             self._logger.log(event)
@@ -320,6 +335,35 @@ class AIRiskGuardAddon:
             except (json.JSONDecodeError, KeyError, IndexError):
                 continue
         return "".join(parts)
+
+
+def _extract_session_id(body: dict, headers: Any) -> str | None:
+    """
+    Extract a stable session/conversation ID from the request.
+    Checks common locations used by Claude Code, OpenAI SDKs, and other AI tools.
+    """
+    # Explicit session/conversation ID fields in body
+    for key in ("conversation_id", "session_id", "thread_id", "chat_id", "request_id"):
+        if val := body.get(key):
+            return str(val)
+
+    # Claude Code sends metadata in the system prompt or top-level
+    if meta := body.get("metadata"):
+        if isinstance(meta, dict):
+            for key in ("conversation_id", "session_id", "user_id"):
+                if val := meta.get(key):
+                    return str(val)
+
+    # OpenAI Assistants API thread
+    if thread := body.get("thread_id"):
+        return str(thread)
+
+    # Some clients embed session info in headers
+    for header in ("x-session-id", "x-conversation-id", "x-thread-id"):
+        if val := headers.get(header):
+            return str(val)
+
+    return None
 
 
 def _convert_body(body: dict, from_fmt: str, to_fmt: str) -> dict:

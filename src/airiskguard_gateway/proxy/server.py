@@ -29,6 +29,8 @@ async def run_proxy(config: GatewayConfig) -> None:
     router = RoutingEngine(
         rules=config.routing.parsed_rules(),
         destinations=config.routing.parsed_destinations(),
+        sticky_sessions=config.routing.sticky_sessions,
+        session_ttl_hours=config.routing.session_ttl_hours,
     )
     addon = AIRiskGuardAddon(config, logger, scanner, policy, router)
     shipper = AuditShipper(config, logger)

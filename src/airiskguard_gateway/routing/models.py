@@ -22,12 +22,18 @@ class RoutingRule:
         "contains_financial_data",
         "model_pattern",
         "provider",
+        "task_type",
+        "complexity",
+        "language",
         "always",
     ]
     action: Literal["route_to", "block", "allow"]
     destination: str = ""       # name of RoutingDestination (required when action=route_to)
     model_pattern: str = ""     # glob e.g. "gpt-4*" (only for match=model_pattern)
-    provider: str = ""          # match specific provider e.g. "openai" (only for match=provider)
+    provider: str = ""          # e.g. "openai" (only for match=provider)
+    task_type: str = ""         # e.g. "simple_qa" (only for match=task_type)
+    complexity: str = ""        # "low" | "medium" | "high" (only for match=complexity)
+    language: str = ""          # "zh" | "en" | "ja" | "ko" etc. (only for match=language)
 
 
 @dataclass
@@ -35,6 +41,7 @@ class RoutingDecision:
     action: Literal["route_to", "block", "allow"]
     destination: RoutingDestination | None = None
     matched_rule: RoutingRule | None = None
+    session_pinned: bool = False    # True if decision came from session store
 
 
 # Financial data keywords
