@@ -70,7 +70,68 @@ def start(config: str | None, daemon: bool) -> None:
 
 
 @main.command()
-def stop() -> None:
+def setup() -> None:
+    """First-time setup: generate CA cert, install to trust store, and print shell config."""
+    import platform
+
+    console.print("\n[bold cyan]◆ AIRiskGuard Gateway — Setup[/]\n")
+
+    # Step 1: generate + install cert
+    console.print("[bold]Step 1[/] — Generating CA certificate...")
+    cert_mgr = CertManager()
+    cert_mgr.ensure_cert()
+    console.print(f"  CA cert: [cyan]{cert_mgr.cert_pem_path()}[/]")
+
+    console.print("[bold]Step 2[/] — Installing to system trust store...")
+    result = cert_mgr.install_to_system()
+    console.print(f"  {result}")
+
+    # Step 3: generate default config
+    cfg_path = CONFIG_DIR / "config.yaml"
+    if not cfg_path.exists():
+        console.print("[bold]Step 3[/] — Writing default config...")
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(DEFAULT_CONFIG_YAML)
+        console.print(f"  Config: [cyan]{cfg_path}[/]")
+    else:
+        console.print(f"[bold]Step 3[/] — Config already exists: [dim]{cfg_path}[/]")
+
+    cfg = GatewayConfig.load()
+    cert_path = cert_mgr.cert_pem_path()
+
+    # Step 4: print shell setup instructions
+    console.print("\n[bold]Step 4[/] — Add these to your shell config:\n")
+
+    shell_file = "~/.zshrc" if platform.system() == "Darwin" else "~/.bashrc"
+    console.print(f"  [dim]# Add to {shell_file}[/]")
+    console.print(f"  [yellow]export HTTPS_PROXY=http://{cfg.listen_host}:{cfg.listen_port}[/]")
+    console.print(f"  [yellow]export NODE_EXTRA_CA_CERTS={cert_path}[/]")
+    console.print()
+
+    # Claude Code specific
+    console.print("[bold]Claude Code[/] — also needs NODE_EXTRA_CA_CERTS for HTTPS interception:")
+    console.print(f"  [dim]NODE_EXTRA_CA_CERTS is already covered by the export above.[/]")
+    console.print()
+
+    # Codex CLI
+    console.print("[bold]OpenAI Codex CLI[/] — uses HTTPS_PROXY automatically.")
+    console.print()
+
+    # Cursor
+    console.print("[bold]Cursor[/] — go to Settings → HTTP Proxy → set to:")
+    console.print(f"  [yellow]http://{cfg.listen_host}:{cfg.listen_port}[/]")
+    console.print()
+
+    console.print("[bold]Verify it's working:[/]")
+    console.print("  1. Run: [cyan]airiskguard-gateway start[/]")
+    console.print("  2. Make any AI request through your tool")
+    console.print("  3. Run: [cyan]airiskguard-gateway logs --tail 5[/]")
+    console.print("     You should see the request appear in the log.")
+    console.print()
+    console.print("[green]Setup complete.[/] Run [cyan]airiskguard-gateway start[/] to begin.\n")
+
+
+
     """Stop the background daemon."""
     if not PID_FILE.exists():
         console.print("[yellow]No running gateway daemon found.[/]")

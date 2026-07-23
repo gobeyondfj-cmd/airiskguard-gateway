@@ -20,18 +20,48 @@ AI traffic management for developer teams. A local HTTPS proxy that sits between
 
 ```bash
 pip install airiskguard
-airiskguard-gateway install-cert
+sudo airiskguard-gateway setup    # generate CA cert + print shell config
 airiskguard-gateway start
 ```
 
-Then in your shell (add to `~/.zshrc` or `~/.bashrc`):
+`setup` generates the CA certificate, installs it to your system trust store, and prints the exact lines to add to your shell config.
+
+### Claude Code
 
 ```bash
+# Add to ~/.zshrc or ~/.bashrc
 export HTTPS_PROXY=http://127.0.0.1:8080
 export NODE_EXTRA_CA_CERTS=~/.config/airiskguard-gateway/mitmproxy-ca-cert.pem
 ```
 
-That's it. Every AI call through Claude Code, Cursor, or any tool now passes through the gateway.
+Then restart Claude Code. Every AI call is now proxied.
+
+### Cursor
+
+Settings → Features → HTTP Proxy → set to `http://127.0.0.1:8080`
+
+The CA cert must also be trusted — `sudo airiskguard-gateway setup` handles this.
+
+### OpenAI Codex CLI
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:8080
+```
+
+Codex CLI respects `HTTPS_PROXY` automatically.
+
+### Any other AI tool
+
+Set `HTTPS_PROXY=http://127.0.0.1:8080`. If the tool uses Node.js, also set `NODE_EXTRA_CA_CERTS`.
+
+### Verify it's working
+
+```bash
+airiskguard-gateway start &
+# make any AI request in Claude Code or Cursor
+airiskguard-gateway logs --tail 5
+# you should see the request appear
+```
 
 ## Configuration
 
