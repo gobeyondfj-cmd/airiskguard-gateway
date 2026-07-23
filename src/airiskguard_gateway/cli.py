@@ -219,6 +219,21 @@ def install_cert() -> None:
     console.print(f"\n[green]Done.[/] Set [yellow]NODE_EXTRA_CA_CERTS={cert_mgr.cert_pem_path()}[/] for Claude Code.")
 
 
+@main.command("license")
+@click.argument("key", required=False)
+def license_cmd(key: str | None) -> None:
+    """Validate a license key. Pass the key as argument or set AIRISKGUARD_LICENSE env var."""
+    from airiskguard_gateway.license import validate_license
+    status = validate_license(license_key=key)
+    if status.valid:
+        console.print(f"[green]License valid.[/] {status.reason}")
+        if status.subscription_id:
+            console.print(f"  Subscription: [dim]{status.subscription_id}[/]")
+    else:
+        console.print(f"[red]License invalid.[/] {status.reason}")
+        console.print("\nGet a license at [cyan]https://airiskguard.ai/#pricing[/]")
+
+
 @main.group()
 def config() -> None:
     """Manage gateway configuration."""

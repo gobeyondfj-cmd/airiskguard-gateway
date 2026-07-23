@@ -1,17 +1,37 @@
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
+from airiskguard_gateway.license import validate_license, LicenseStatus
 from airiskguard_gateway.policy_server.database import init_db
 from airiskguard_gateway.policy_server.routers import teams, policies, events, dashboard
+
+log = logging.getLogger(__name__)
+
+# Module-level license status — set at startup, read by routes
+_license: LicenseStatus | None = None
+
+
+def get_license() -> LicenseStatus:
+    return _license or LicenseStatus(False, "License not checked yet.")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _license
+
+    # Validate license on startup
+    _license = validate_license()
+    if _license.valid:
+        log.info("License valid. Team tier features enabled.")
+    else:
+        log.warning("License invalid: %s — Team features locked.", _license.reason)
+
     await init_db()
     yield
 
@@ -19,8 +39,8 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title="AIRiskGuard Gateway — Policy Server",
-        description="Centralized policy management and audit log storage for AIRiskGuard Gateway.",
-        version="0.1.0",
+        description="Centralized policy management for AIRiskGuard Gateway.",
+        version="0.5.0",
         lifespan=lifespan,
     )
 
@@ -35,7 +55,12 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status": "ok", "service": "airiskguard-gateway-policy-server"}
+        lic = get_license()
+        return {
+            "status": "ok",
+            "licensed": lic.valid,
+            "license_message": lic.reason if not lic.valid else "valid",
+        }
 
     return app
 

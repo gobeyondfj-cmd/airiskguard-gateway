@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from airiskguard_gateway.policy_server.database import get_db
 from airiskguard_gateway.policy_server.models import AuditEventRecord, Team
+from airiskguard_gateway.policy_server.main import get_license
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
@@ -20,6 +21,12 @@ router = APIRouter(tags=["dashboard"])
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse:
+    lic = get_license()
+    if not lic.valid:
+        return templates.TemplateResponse(request, "unlicensed.html", {
+            "reason": lic.reason,
+        })
+
     since_24h = datetime.now(UTC) - timedelta(hours=24)
     stats = await _get_stats(db, since_24h)
     cost_data = await _get_cost_data(db)

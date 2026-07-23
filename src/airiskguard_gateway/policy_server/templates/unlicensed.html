@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}License Required — AIRiskGuard Gateway{% endblock %}
+{% block content %}
+
+<div style="max-width:520px;margin:6rem auto;text-align:center">
+    <div style="width:72px;height:72px;background:rgba(239,68,68,0.1);border:2px solid rgba(239,68,68,0.3);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:2rem;margin:0 auto 1.5rem;box-shadow:0 0 32px rgba(239,68,68,0.15)">🔒</div>
+
+    <h1 style="font-size:1.75rem;font-weight:800;color:white;margin-bottom:0.75rem">Team License Required</h1>
+    <p style="color:#7d8fa8;margin-bottom:0.5rem;font-size:0.95rem">
+        The AIRiskGuard Gateway dashboard requires a valid Team license.
+    </p>
+    {% if reason %}
+    <p style="font-family:'SF Mono',monospace;font-size:0.8rem;color:#f87171;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:6px;padding:0.75rem;margin:1.25rem 0;text-align:left">{{ reason }}</p>
+    {% endif %}
+
+    <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(0,212,255,0.15);border-radius:12px;padding:2rem;margin:2rem 0;text-align:left">
+        <p style="color:#7d8fa8;font-size:0.8rem;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:1rem">To activate your license</p>
+
+        <div style="display:flex;gap:0.75rem;margin-bottom:0.875rem;align-items:flex-start">
+            <span style="min-width:20px;height:20px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem;font-weight:700;color:#00d4ff">1</span>
+            <p style="font-size:0.875rem;color:#e2e8f0">Set the <code style="color:#00d4ff;background:rgba(0,212,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">AIRISKGUARD_LICENSE</code> environment variable to your license key</p>
+        </div>
+        <div style="background:#020912;border:1px solid rgba(0,212,255,0.12);border-radius:6px;padding:0.75rem 1rem;font-family:monospace;font-size:0.8rem;color:#00d4ff;margin-bottom:1.25rem">
+            AIRISKGUARD_LICENSE=XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX
+        </div>
+
+        <div style="display:flex;gap:0.75rem;margin-bottom:0.875rem;align-items:flex-start">
+            <span style="min-width:20px;height:20px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem;font-weight:700;color:#00d4ff">2</span>
+            <p style="font-size:0.875rem;color:#e2e8f0">Restart the policy server</p>
+        </div>
+        <div style="background:#020912;border:1px solid rgba(0,212,255,0.12);border-radius:6px;padding:0.75rem 1rem;font-family:monospace;font-size:0.8rem;color:#00d4ff">
+            docker compose restart policy-server
+        </div>
+    </div>
+
+    <p style="color:#7d8fa8;font-size:0.85rem;margin-bottom:1.5rem">
+        Don't have a license? Get yours at
+        <a href="https://airiskguard.ai/#pricing" style="color:#00d4ff;text-decoration:none">airiskguard.ai</a> — $299/mo, cancel anytime.
+    </p>
+
+    <a href="https://airiskguard.ai/#pricing" target="_blank"
+       style="display:inline-block;background:#00d4ff;color:#050a14;padding:0.75rem 2rem;border-radius:8px;font-weight:700;font-size:0.9rem;text-decoration:none;box-shadow:0 0 20px rgba(0,212,255,0.3)">
+        Get a License
+    </a>
+    <p style="margin-top:1rem;font-size:0.8rem;color:#7d8fa8">
+        Already purchased? Email <a href="mailto:sales@airiskguard.ai" style="color:#00d4ff">sales@airiskguard.ai</a>
+    </p>
+</div>
+
+{% endblock %}
