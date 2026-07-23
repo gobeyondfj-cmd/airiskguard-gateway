@@ -6,7 +6,7 @@
 
 AI traffic management for developer teams. A local HTTPS proxy that sits between your developers and AI provider APIs — routing, logging, and protecting every AI call.
 
-**Free (MIT) · pip install · works with Claude Code, Cursor, Copilot, any AI tool**
+**Free (MIT) · `pip install airiskguard` · works with Claude Code, Cursor, Copilot, any AI tool**
 
 ## What it does
 
@@ -19,7 +19,7 @@ AI traffic management for developer teams. A local HTTPS proxy that sits between
 ## Quickstart
 
 ```bash
-pip install airiskguard-gateway
+pip install airiskguard
 airiskguard-gateway install-cert
 airiskguard-gateway start
 ```

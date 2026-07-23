@@ -3,14 +3,27 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "airiskguard-gateway"
-version = "0.1.0"
-description = "AIRiskGuard Gateway — AI governance proxy for regulated industries"
+name = "airiskguard"
+version = "0.5.0"
+description = "AIRiskGuard Gateway — AI traffic management. Route, protect and monitor every AI API call."
 readme = "README.md"
 license = {text = "MIT"}
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "AIRiskGuard", email = "info@airiskguard.ai" }]
+homepage = "https://airiskguard.ai"
+repository = "https://github.com/gobeyondfj-cmd/airiskguard-gateway"
+keywords = ["ai", "gateway", "proxy", "llm", "routing", "security", "cost", "openai", "anthropic"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Internet :: Proxy Servers",
+]
 
 dependencies = [
     "mitmproxy>=10.3.1",
