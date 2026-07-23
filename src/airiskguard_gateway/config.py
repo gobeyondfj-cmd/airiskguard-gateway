@@ -25,11 +25,25 @@ class ProviderConfig(BaseModel):
     auth_header: str = "Authorization"
     auth_prefix: str = "Bearer "
     api_key_env: str = ""       # env var name for the API key
+    api_key: str = ""           # inline key (fallback if env var not set)
 
     def get_api_key(self) -> str:
+        """Env var takes priority over inline key."""
         if self.api_key_env:
-            return os.environ.get(self.api_key_env, "")
-        return ""
+            key = os.environ.get(self.api_key_env, "")
+            if key:
+                return key
+        return self.api_key
+
+    def key_status(self) -> tuple[str, str]:
+        """Returns (source, masked_key) for display."""
+        if self.api_key_env:
+            key = os.environ.get(self.api_key_env, "")
+            if key:
+                return "env", key[:8] + "..."
+        if self.api_key:
+            return "config", self.api_key[:8] + "..."
+        return "missing", ""
 
     def host(self) -> str:
         """Extract hostname from base_url for intercept matching."""
@@ -170,15 +184,27 @@ class GatewayConfig(BaseModel):
     # Provider registry — built-ins merged with any user overrides
     providers: dict[str, dict] = Field(default_factory=dict)
 
+    # Inline API keys — alternative to env vars
+    # These are merged into the matching provider config at runtime
+    api_keys: dict[str, str] = Field(default_factory=dict)
+
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     policy_server: PolicyServerConfig = Field(default_factory=PolicyServerConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
     log_level: str = "INFO"
 
     def resolved_providers(self) -> dict[str, ProviderConfig]:
-        """Merge built-ins with user-defined providers. User overrides win."""
+        """Merge built-ins with user-defined providers. User overrides win.
+        Inline api_keys are injected into the matching provider config."""
         merged: dict[str, dict] = {**BUILTIN_PROVIDERS, **self.providers}
-        return {k: ProviderConfig(**v) for k, v in merged.items()}
+        result: dict[str, ProviderConfig] = {}
+        for name, data in merged.items():
+            cfg = ProviderConfig(**data)
+            # Inject inline key if provided and no env var key is set
+            if name in self.api_keys and self.api_keys[name]:
+                cfg = cfg.model_copy(update={"api_key": self.api_keys[name]})
+            result[name] = cfg
+        return result
 
     def intercepted_hosts(self) -> set[str]:
         """All hostnames the proxy should intercept."""
@@ -212,7 +238,7 @@ def machine_id() -> str:
 
 DEFAULT_CONFIG_YAML = """\
 # AIRiskGuard Gateway configuration
-# Docs: https://docs.airiskguard.ai/gateway/config
+# Docs: https://github.com/gobeyondfj-cmd/airiskguard-gateway#readme
 
 listen_host: "127.0.0.1"
 listen_port: 8080
@@ -232,42 +258,42 @@ allowed_models:
   - deepseek-chat
   - moonshot-v1-8k
 
-# Provider API keys — set the env vars below, or override base_url per provider
-# The gateway reads these to authenticate routed requests.
-# Example: DEEPSEEK_API_KEY=sk-xxx in your environment
+# API Keys
+# Option 1 (recommended): set env vars in your shell
+#   export ANTHROPIC_API_KEY=sk-ant-...
+#   export OPENAI_API_KEY=sk-...
+#   export DEEPSEEK_API_KEY=sk-...
+#   export MOONSHOT_API_KEY=sk-...
+#   export GLM_API_KEY=...
+#   export MINIMAX_API_KEY=...
+#   export MISTRAL_API_KEY=sk-...
 #
-# Built-in providers (no config needed, just set the env var):
-#   anthropic   → ANTHROPIC_API_KEY
-#   openai      → OPENAI_API_KEY
-#   deepseek    → DEEPSEEK_API_KEY   (https://api.deepseek.com)
-#   moonshot    → MOONSHOT_API_KEY   (https://api.moonshot.cn/v1)
-#   glm         → GLM_API_KEY        (https://open.bigmodel.cn/api/payi/v1)
-#   minimax     → MINIMAX_API_KEY    (https://api.minimax.chat/v1)
-#   mistral     → MISTRAL_API_KEY    (https://api.mistral.ai/v1)
-#   ollama      → no key needed      (http://localhost:11434)
-#
-# Add a custom provider or override a built-in:
-# providers:
-#   my_private_llm:
-#     base_url: https://llm.internal.company.com/v1
-#     format: openai           # openai | anthropic | ollama
-#     auth_header: Authorization
-#     auth_prefix: "Bearer "
-#     api_key_env: MY_LLM_API_KEY
+# Option 2: set inline here (env var takes priority if both are set)
+# api_keys:
+#   anthropic: sk-ant-...
+#   openai: sk-...
+#   deepseek: sk-...
+#   moonshot: sk-...
+#   glm: ...
+#   minimax: ...
+#   mistral: sk-...
 
 # Smart routing rules — evaluated in order, first match wins
 # routing:
+#   sticky_sessions: true
+#   session_ttl_hours: 24
 #   rules:
 #     - match: contains_pii
 #       action: route_to
-#       destination: local_ollama    # send PII to local model, never leaves machine
-#     - match: contains_financial_data
+#       destination: local_ollama
+#     - match: task_type
+#       task_type: simple_qa
 #       action: route_to
-#       destination: deepseek_cheap  # financial data → cheaper model
+#       destination: deepseek_cheap
 #     - match: model_pattern
 #       model_pattern: "gpt-4*"
 #       action: route_to
-#       destination: gpt_mini        # downgrade expensive models
+#       destination: gpt_mini
 #   destinations:
 #     local_ollama:
 #       provider: ollama

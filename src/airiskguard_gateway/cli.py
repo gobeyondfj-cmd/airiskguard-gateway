@@ -314,7 +314,46 @@ def install_cert() -> None:
     console.print(f"\n[green]Done.[/] Set [yellow]NODE_EXTRA_CA_CERTS={cert_mgr.cert_pem_path()}[/] for Claude Code.")
 
 
-@main.command("license")
+@main.command("keys")
+def keys_cmd() -> None:
+    """Show API key status for all configured providers."""
+    from airiskguard_gateway.config import BUILTIN_PROVIDERS
+    cfg = GatewayConfig.load()
+    providers = cfg.resolved_providers()
+
+    table = Table(title="Provider API Keys", show_lines=False)
+    table.add_column("Provider", style="cyan", width=14)
+    table.add_column("Env Var", style="dim", width=24)
+    table.add_column("Status", width=10)
+    table.add_column("Key (masked)", style="dim", width=20)
+
+    for name, p in providers.items():
+        if name == "ollama":
+            table.add_row(name, "(none)", "[dim]n/a[/]", "[dim]local model[/]")
+            continue
+        source, masked = p.key_status()
+        if source == "missing":
+            status = "[red]✗ missing[/]"
+            masked = ""
+        elif source == "env":
+            status = "[green]✓ env[/]"
+        else:
+            status = "[yellow]✓ config[/]"
+        env_var = p.api_key_env or "—"
+        table.add_row(name, env_var, status, masked)
+
+    console.print(table)
+    console.print()
+    console.print("[dim]Set env vars in your shell, or add to config.yaml:[/]")
+    console.print("[dim]  api_keys:[/]")
+    console.print("[dim]    anthropic: sk-ant-...[/]")
+    console.print("[dim]    openai: sk-...[/]")
+    console.print("[dim]    deepseek: sk-...[/]")
+    console.print()
+    console.print(f"[dim]Config: {CONFIG_DIR / 'config.yaml'}[/]")
+
+
+
 @click.argument("key", required=False)
 def license_cmd(key: str | None) -> None:
     """Validate a license key. Pass the key as argument or set AIRISKGUARD_LICENSE env var."""
