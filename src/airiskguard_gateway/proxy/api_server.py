@@ -128,7 +128,7 @@ def create_api_server(
         upstream_url = f"{upstream_base.rstrip('/')}/{path}"
 
         # Build upstream headers
-        upstream_headers = _build_upstream_headers(request, dest_cfg, body)
+        upstream_headers = _build_upstream_headers(request, dest_cfg, body_bytes)
         is_streaming = body.get("stream", False)
 
         signals = classify(ctx.prompt_text)
@@ -221,9 +221,8 @@ async def _stream_response(
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-def _build_upstream_headers(request: Request, dest_cfg, body: dict) -> dict:
+def _build_upstream_headers(request: Request, dest_cfg, body_bytes: bytes) -> dict:
     """Build headers for the upstream request."""
-    # Start with passthrough of relevant headers
     skip = {"host", "content-length", "transfer-encoding", "connection"}
     headers = {k: v for k, v in request.headers.items() if k.lower() not in skip}
 
@@ -236,7 +235,7 @@ def _build_upstream_headers(request: Request, dest_cfg, body: dict) -> dict:
         value = f"{dest_cfg.auth_prefix}{api_key}".strip()
         headers[dest_cfg.auth_header] = value
 
-    headers["content-length"] = str(len(json.dumps(body).encode()))
+    headers["content-length"] = str(len(body_bytes))
     return headers
 
 

@@ -1,79 +1,81 @@
 # AIRiskGuard Gateway
 
-![PyPI](https://img.shields.io/pypi/v/airiskguard-gateway)
+![PyPI](https://img.shields.io/pypi/v/airiskguard)
 ![License: MIT](https://img.shields.io/badge/License-MIT-00d4ff.svg)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
 
-AI traffic management for developer teams. A local HTTPS proxy that sits between your developers and AI provider APIs — routing, logging, and protecting every AI call.
+AI traffic management for developer teams. A local proxy that sits between your developers and AI provider APIs — routing, logging, and protecting every AI call.
 
 **Free (MIT) · `pip install airiskguard` · works with Claude Code, Cursor, Copilot, any AI tool**
 
 ## What it does
 
-- **Smart routing** — route PII to an internal model, financial data to Azure, simple queries to cheaper models. Rules in plain YAML.
+- **Smart routing** — route PII to an internal model, financial data to Azure, simple queries to cheaper models. Rules in plain YAML. Session stickiness keeps conversations on the same model.
 - **Cost dashboard** — see spend by model, by day, by team. Know your AI bill before it arrives.
-- **Secrets + PII protection** — blocks API keys, SSNs, credit cards, and financial data before they reach external APIs.
-- **Model allowlist** — define which models your team can use. Everything else is blocked at the proxy.
-- **Session stickiness** — conversations stay on the same model. No broken contexts when routing changes.
+- **Sensitive data protection** — blocks API keys, SSNs, credit cards, and financial data before they reach external APIs. Redacts or blocks based on your policy.
+- **Model allowlist** — define which models your team can use. Everything else is blocked.
+- **Content classification** — detects task type (code, summarization, translation, Q&A), complexity, and language to enable smarter routing rules.
+
+---
 
 ## Quickstart
 
 ```bash
 pip install airiskguard
-sudo airiskguard-gateway setup    # generate CA cert + print per-tool config
-airiskguard-gateway start         # starts in API mode (default)
+airiskguard-gateway start         # starts API proxy on localhost:8080
 ```
 
-## Two modes
+### Configure your AI tool
 
-### API mode (recommended — no CA cert needed)
-
-The gateway runs as an HTTP server. Point AI tools at it directly via `BASE_URL`.
-
-```bash
-airiskguard-gateway start   # default: API mode on localhost:8080
-```
-
-**Claude Code:**
+**Claude Code** — set `ANTHROPIC_BASE_URL`:
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic
 ```
 
-**OpenAI Codex CLI:**
+**OpenAI Codex CLI** — set `OPENAI_BASE_URL`:
 ```bash
 export OPENAI_BASE_URL=http://127.0.0.1:8080/openai
 ```
 
-**DeepSeek / Moonshot / any provider:**
+**DeepSeek / Moonshot / GLM / any provider:**
 ```bash
-export OPENAI_BASE_URL=http://127.0.0.1:8080/deepseek   # or moonshot, glm, etc.
+export OPENAI_BASE_URL=http://127.0.0.1:8080/deepseek   # or /moonshot, /glm, /minimax
 ```
 
-### Transparent proxy mode (for Cursor and generic tools)
-
+**Cursor** — use transparent proxy mode:
 ```bash
 airiskguard-gateway start --mode proxy
+# then: Settings → Features → HTTP Proxy → http://127.0.0.1:8080
 ```
-
-```bash
-export HTTPS_PROXY=http://127.0.0.1:8080
-export NODE_EXTRA_CA_CERTS=~/.config/airiskguard-gateway/mitmproxy-ca-cert.pem
-```
-
-**Cursor:** Settings → Features → HTTP Proxy → `http://127.0.0.1:8080`
 
 ### Verify it's working
 
 ```bash
-airiskguard-gateway logs --tail 5   # should show requests after you use Claude Code
+# In another terminal, after setting the env var above:
+airiskguard-gateway logs --tail 5
+# You should see your AI requests appear here
 ```
+
+---
+
+## Two modes
+
+| Mode | How it works | Best for |
+|---|---|---|
+| `api` (default) | FastAPI HTTP server at `localhost:8080`. Point SDKs at it via `BASE_URL`. No CA cert needed. | Claude Code, Codex CLI, any SDK-based tool |
+| `proxy` | mitmproxy transparent HTTPS proxy. Set `HTTPS_PROXY`. Requires CA cert install. | Cursor, browser-based tools, generic HTTP clients |
+
+```bash
+airiskguard-gateway start              # API mode (default)
+airiskguard-gateway start --mode proxy # Transparent proxy mode
+```
+
+---
 
 ## Configuration
 
-Config lives at `~/.config/airiskguard-gateway/config.yaml`. Generate the default:
-
 ```bash
-airiskguard-gateway config init
+airiskguard-gateway config init   # write default config to ~/.config/airiskguard-gateway/config.yaml
 ```
 
 Key settings:
@@ -85,25 +87,28 @@ on_pii_detected: redact       # block | redact | log
 allowed_models:
   - claude-sonnet-4-6
   - gpt-4o
+  - gpt-4o-mini
   - deepseek-chat
 ```
 
+---
+
 ## Smart Routing
 
-Route requests based on content, task type, language, or model:
+Rules are evaluated in order. First match wins. Session stickiness keeps a conversation on the same model once routed.
 
 ```yaml
 routing:
-  sticky_sessions: true      # same conversation → same model
+  sticky_sessions: true       # same conversation → same model
   session_ttl_hours: 24
 
   rules:
-    # PII → never leaves the machine
+    # PII → local model, never leaves the machine
     - match: contains_pii
       action: route_to
       destination: local_ollama
 
-    # Simple questions → cheap model
+    # Simple questions → 94% cheaper
     - match: task_type
       task_type: simple_qa
       action: route_to
@@ -121,6 +126,10 @@ routing:
       action: route_to
       destination: gpt_mini
 
+    # Financial data → block external, or route to private endpoint
+    - match: contains_financial_data
+      action: block
+
   destinations:
     local_ollama:
       provider: ollama
@@ -128,7 +137,7 @@ routing:
 
     deepseek_cheap:
       provider: deepseek
-      model: deepseek-chat    # $0.14/M vs $10/M for GPT-4o
+      model: deepseek-chat    # $0.14/M input vs $2.50/M for GPT-4o
 
     moonshot:
       provider: moonshot
@@ -139,23 +148,40 @@ routing:
       model: gpt-4o-mini
 ```
 
+### Available match types
+
+| match | description |
+|---|---|
+| `contains_pii` | email, phone, SSN, credit card, DOB detected in prompt |
+| `contains_secrets` | API keys, DB URIs, private keys detected |
+| `contains_financial_data` | revenue, IBAN, account numbers, trade data etc. |
+| `task_type` | `simple_qa`, `code_generation`, `summarization`, `translation`, `complex_reasoning`, `data_analysis` |
+| `complexity` | `low`, `medium`, `high` — based on prompt length + task type |
+| `language` | `zh`, `en`, `ja`, `ko` etc. — detected from character sets |
+| `model_pattern` | glob match on requested model name e.g. `gpt-4*` |
+| `provider` | match by provider name e.g. `openai`, `anthropic` |
+| `always` | catch-all fallback rule |
+
+---
+
 ## Supported Providers
 
-Built-in — just set the env var:
+Built-in — just set the env var and route to the provider name:
 
-| Provider | Env var | Notes |
-|---|---|---|
-| Anthropic | `ANTHROPIC_API_KEY` | |
-| OpenAI | `OPENAI_API_KEY` | |
-| DeepSeek | `DEEPSEEK_API_KEY` | 94% cheaper than GPT-4o |
-| Moonshot | `MOONSHOT_API_KEY` | Chinese-optimized |
-| GLM (Zhipu) | `GLM_API_KEY` | |
-| MiniMax | `MINIMAX_API_KEY` | |
-| Mistral | `MISTRAL_API_KEY` | |
-| Azure OpenAI | `AZURE_OPENAI_API_KEY` | set `base_url` in config |
-| Ollama | none | local models |
+| Provider | Env var | BASE_URL path | Notes |
+|---|---|---|---|
+| Anthropic | `ANTHROPIC_API_KEY` | `/anthropic` | Claude Code default |
+| OpenAI | `OPENAI_API_KEY` | `/openai` | Codex CLI default |
+| DeepSeek | `DEEPSEEK_API_KEY` | `/deepseek` | 94% cheaper than GPT-4o |
+| Moonshot | `MOONSHOT_API_KEY` | `/moonshot` | Chinese-optimized |
+| GLM (Zhipu) | `GLM_API_KEY` | `/glm` | |
+| MiniMax | `MINIMAX_API_KEY` | `/minimax` | |
+| Mistral | `MISTRAL_API_KEY` | `/mistral` | |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY` | `/azure_openai` | set `base_url` in config |
+| Google | `GOOGLE_API_KEY` | `/google` | |
+| Ollama | (none) | `/ollama` | local models |
 
-Add any OpenAI-compatible provider (vLLM, LiteLLM, etc.):
+Add any OpenAI-compatible provider (vLLM, LiteLLM, custom):
 
 ```yaml
 providers:
@@ -165,33 +191,53 @@ providers:
     api_key_env: MY_LLM_API_KEY
 ```
 
-## CLI Commands
+---
+
+## CLI Reference
 
 ```bash
-airiskguard-gateway start              # start proxy (foreground)
+airiskguard-gateway setup              # first-time setup: cert + per-tool instructions
+airiskguard-gateway start              # start in API mode (default)
+airiskguard-gateway start --mode proxy # start in transparent proxy mode
 airiskguard-gateway start --daemon     # start as background daemon
 airiskguard-gateway stop               # stop daemon
 airiskguard-gateway status             # show status + last hour stats
 airiskguard-gateway logs --tail 50     # view audit log
-airiskguard-gateway logs --follow      # live log stream
+airiskguard-gateway logs --follow      # live stream
 airiskguard-gateway logs --blocked-only
-airiskguard-gateway install-cert       # generate CA + install to OS trust store
+airiskguard-gateway license YOUR-KEY   # validate a license key
 airiskguard-gateway config init        # write default config.yaml
+airiskguard-gateway config show        # print current config
+airiskguard-gateway install-cert       # generate CA + install to trust store (proxy mode)
 ```
+
+---
 
 ## Team Tier ($299/mo)
 
 The free proxy runs locally. The Team tier adds:
 
 - Web dashboard with cost breakdown by model
-- Centralized policy server for all developer machines
+- Centralized policy server — push policies to all developer machines
 - Slack alerts on blocked requests
-- Per-team policies and model allowlists
+- Per-team model allowlists
 - 30-day audit log retention
 
 Start at [airiskguard.ai](https://airiskguard.ai/#pricing).
 
+### Activating your license
+
+```bash
+# Validate your key
+airiskguard-gateway license YOUR-LICENSE-KEY
+
+# Start the policy server
+AIRISKGUARD_LICENSE=YOUR-LICENSE-KEY docker compose up -d
+```
+
+---
+
 ## License
 
 Proxy core: **MIT** — free to use, modify, and distribute.
-Policy server + dashboard (`src/airiskguard_gateway/policy_server/`): **Proprietary** — requires a Team license. See [airiskguard.ai/pricing](https://airiskguard.ai/#pricing).
+Policy server + dashboard (`src/airiskguard_gateway/policy_server/`): **Proprietary** — requires a Team license.
