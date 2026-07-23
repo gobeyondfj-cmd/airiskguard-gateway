@@ -27,7 +27,7 @@ DAEMON_LOG = LOG_DIR / "airiskguard-gateway.log"
 
 @click.group()
 def main() -> None:
-    """AIRiskGuard Gateway — AI governance proxy for regulated industries."""
+    """AIRiskGuard Gateway — AI traffic management for developer teams."""
     pass
 
 

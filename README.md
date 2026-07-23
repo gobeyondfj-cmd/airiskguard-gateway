@@ -58,6 +58,43 @@ airiskguard-gateway logs --tail 5
 
 ---
 
+## API Keys
+
+Check which keys are configured:
+
+```bash
+airiskguard-gateway keys
+```
+
+```
+Provider       Env Var                  Status      Key (masked)
+anthropic      ANTHROPIC_API_KEY        ✓ env       sk-ant-...
+openai         OPENAI_API_KEY           ✗ missing
+deepseek       DEEPSEEK_API_KEY         ✓ config    sk-...
+ollama         (none)                   n/a         local model
+```
+
+**Option 1 — env vars (recommended):**
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+export DEEPSEEK_API_KEY=sk-...
+export MOONSHOT_API_KEY=sk-...
+export GLM_API_KEY=...
+export MISTRAL_API_KEY=sk-...
+```
+
+**Option 2 — inline in `config.yaml`** (env var takes priority if both set):
+```yaml
+api_keys:
+  anthropic: sk-ant-...
+  openai: sk-...
+  deepseek: sk-...
+  moonshot: sk-...
+```
+
+---
+
 ## Two modes
 
 | Mode | How it works | Best for |
@@ -202,6 +239,7 @@ airiskguard-gateway start --mode proxy # start in transparent proxy mode
 airiskguard-gateway start --daemon     # start as background daemon
 airiskguard-gateway stop               # stop daemon
 airiskguard-gateway status             # show status + last hour stats
+airiskguard-gateway keys               # show API key status for all providers
 airiskguard-gateway logs --tail 50     # view audit log
 airiskguard-gateway logs --follow      # live stream
 airiskguard-gateway logs --blocked-only
