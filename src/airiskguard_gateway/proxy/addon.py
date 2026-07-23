@@ -11,40 +11,24 @@ from mitmproxy import http
 from mitmproxy.http import HTTPFlow
 
 from airiskguard_gateway.audit.logger import AuditEvent, AuditLogger
-from airiskguard_gateway.config import GatewayConfig, machine_id
+from airiskguard_gateway.config import GatewayConfig, ProviderConfig, machine_id
 from airiskguard_gateway.costs import calculate_cost
-from airiskguard_gateway.models import PolicyDecision
+from airiskguard_gateway.models import Category, Finding, PolicyDecision, Severity
 from airiskguard_gateway.policy.engine import PolicyEngine
 from airiskguard_gateway.proxy.provider import (
-    Provider,
-    detect_provider,
+    RequestContext,
+    detect_provider_by_host,
     extract_request_context,
-    extract_response_context,
-    estimate_tokens,
+    extract_response_text,
+    extract_token_counts,
+    extract_sse_token_counts,
+    get_chat_path,
 )
 from airiskguard_gateway.routing.engine import RoutingEngine
 from airiskguard_gateway.routing.models import RoutingDestination
 from airiskguard_gateway.scanner.engine import ScanEngine
 
 log = logging.getLogger(__name__)
-
-_AI_HOSTS = {
-    "api.anthropic.com",
-    "api.openai.com",
-    "generativelanguage.googleapis.com",
-}
-
-# Provider base URLs for rewriting routed requests
-_PROVIDER_BASE_URLS = {
-    "anthropic": "https://api.anthropic.com",
-    "openai":    "https://api.openai.com",
-    "ollama":    "http://localhost:11434",
-    "google":    "https://generativelanguage.googleapis.com",
-}
-
-
-def _is_ai_request(host: str) -> bool:
-    return host in _AI_HOSTS or host.endswith(".openai.azure.com")
 
 
 class AIRiskGuardAddon:
@@ -62,13 +46,15 @@ class AIRiskGuardAddon:
         self._policy = policy
         self._router = router
         self._mid = machine_id()
+        self._providers = config.resolved_providers()
+        self._intercepted_hosts = config.intercepted_hosts()
         self._sse_buffers: dict[str, list[str]] = {}
         self._flow_start_times: dict[str, float] = {}
-        self._flow_models: dict[str, str] = {}     # flow.id → model name for response pairing
+        self._flow_contexts: dict[str, RequestContext] = {}
 
     def request(self, flow: HTTPFlow) -> None:
         host = flow.request.pretty_host
-        if not _is_ai_request(host):
+        if not self._is_ai_host(host):
             return
 
         self._flow_start_times[flow.id] = time.monotonic()
@@ -76,23 +62,24 @@ class AIRiskGuardAddon:
         if body is None:
             return
 
-        path = flow.request.path
         request_id = flow.request.headers.get("x-request-id", str(uuid.uuid4()))
-        ctx = extract_request_context(host, path, body, request_id)
-        self._flow_models[flow.id] = ctx.model
+        ctx = extract_request_context(
+            host, flow.request.path, body, request_id, self._providers
+        )
+        self._flow_contexts[flow.id] = ctx
 
         # 1. Model allowlist
         model_decision = self._policy.check_model_allowed(ctx.model)
         if model_decision.action == "block":
-            self._kill_flow(flow, model_decision, ctx.provider.value, ctx.model, request_id)
+            self._kill_flow(flow, model_decision, ctx, request_id)
             return
 
         # 2. Outbound scan
-        findings = self._scanner._scan_outbound_sync(ctx.prompt_text, f"{host}{path}")
+        findings = self._scanner._scan_outbound_sync(ctx.prompt_text, f"{host}{ctx.path}")
         outbound_decision = self._policy.evaluate_outbound(findings)
 
         if outbound_decision.action == "block":
-            self._kill_flow(flow, outbound_decision, ctx.provider.value, ctx.model, request_id)
+            self._kill_flow(flow, outbound_decision, ctx, request_id)
             return
 
         routed_to: str | None = None
@@ -101,29 +88,26 @@ class AIRiskGuardAddon:
             redacted = self._scanner.redact(ctx.prompt_text)
             body_text = flow.request.get_text(strict=False) or ""
             flow.request.text = body_text.replace(ctx.prompt_text, redacted)
-            self._log_event(ctx.provider.value, ctx.model, "outbound", "redacted",
-                            findings, request_id, routed_to=None)
+            self._log_event(ctx, "outbound", "redacted", findings, request_id)
             return
 
-        # 3. Routing (after scan — routing can use findings as conditions)
+        # 3. Routing
         routing_decision = self._router.evaluate(ctx, findings)
 
         if routing_decision.action == "block":
-            from airiskguard_gateway.models import Category, Finding, Severity
             block_finding = Finding(
                 id=str(uuid.uuid4()),
                 category=Category.MODEL_POLICY,
                 severity=Severity.HIGH,
                 title="Request blocked by routing rule",
                 description="A routing rule blocked this request.",
-                evidence="",
-                location="routing",
+                evidence="", location="routing",
                 remediation="Check your routing configuration.",
             )
             self._kill_flow(
                 flow,
                 PolicyDecision(action="block", findings=[block_finding], message="Blocked by routing rule."),
-                ctx.provider.value, ctx.model, request_id,
+                ctx, request_id,
             )
             return
 
@@ -133,13 +117,13 @@ class AIRiskGuardAddon:
             routed_to = f"{dest.provider}:{dest.model}"
             log.info("Routed %s → %s", ctx.model, routed_to)
 
-        self._log_event(ctx.provider.value, ctx.model, "outbound",
+        self._log_event(ctx, "outbound",
                         "routed" if routed_to else "allowed",
                         findings, request_id, routed_to=routed_to)
 
     def response(self, flow: HTTPFlow) -> None:
         host = flow.request.pretty_host
-        if not _is_ai_request(host):
+        if not self._is_ai_host(host):
             return
 
         content_type = flow.response.headers.get("content-type", "")
@@ -153,26 +137,22 @@ class AIRiskGuardAddon:
         if not body:
             return
 
-        provider = detect_provider(flow.request.pretty_host)
-        model = self._flow_models.get(flow.id, body.get("model", "unknown"))
+        ctx = self._flow_contexts.get(flow.id)
+        fmt = ctx.provider_format if ctx else "openai"
+        model = (ctx.model if ctx else None) or body.get("model", "unknown")
 
-        # Extract token usage + calculate cost
-        input_tokens, output_tokens = _extract_token_counts(provider, body)
-        cost = calculate_cost(model, input_tokens, output_tokens) if input_tokens or output_tokens else None
+        input_tokens, output_tokens = extract_token_counts(fmt, body)
+        cost = calculate_cost(model, input_tokens, output_tokens) if (input_tokens or output_tokens) else None
 
-        ctx = extract_response_context(provider, model, body, is_streaming=False)
-        findings = self._scanner._scan_inbound_sync(ctx.response_text, host) if ctx.response_text else []
+        response_text = extract_response_text(fmt, body)
+        findings = self._scanner._scan_inbound_sync(response_text, host) if response_text else []
         latency = self._get_latency(flow.id)
 
-        self._log_event(
-            provider.value, model, "inbound", "allowed",
-            findings,
-            flow.request.headers.get("x-request-id", ""),
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=cost,
-            latency_ms=latency,
-        )
+        if ctx:
+            self._log_event(ctx, "inbound", "allowed", findings,
+                            flow.request.headers.get("x-request-id", ""),
+                            input_tokens=input_tokens, output_tokens=output_tokens,
+                            cost_usd=cost, latency_ms=latency)
 
     def response_body_done(self, flow: HTTPFlow) -> None:
         if flow.id not in self._sse_buffers:
@@ -181,58 +161,85 @@ class AIRiskGuardAddon:
         accumulated = "\n".join(self._sse_buffers.pop(flow.id))
         assembled = self._assemble_sse(accumulated)
 
-        provider = detect_provider(flow.request.pretty_host)
-        model = self._flow_models.get(flow.id, "unknown")
+        ctx = self._flow_contexts.get(flow.id)
+        fmt = ctx.provider_format if ctx else "openai"
+        model = ctx.model if ctx else "unknown"
 
-        # Extract token usage from SSE (last [DONE] chunk often has usage)
-        input_tokens, output_tokens = _extract_sse_token_counts(accumulated, provider)
-        cost = calculate_cost(model, input_tokens, output_tokens) if input_tokens or output_tokens else None
+        input_tokens, output_tokens = extract_sse_token_counts(accumulated, fmt)
+        cost = calculate_cost(model, input_tokens, output_tokens) if (input_tokens or output_tokens) else None
 
         findings = self._scanner._scan_inbound_sync(assembled, flow.request.pretty_host) if assembled else []
         latency = self._get_latency(flow.id)
 
-        self._log_event(
-            provider.value, model, "inbound", "allowed",
-            findings,
-            flow.request.headers.get("x-request-id", ""),
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=cost,
-            latency_ms=latency,
+        if ctx:
+            self._log_event(ctx, "inbound", "allowed", findings,
+                            flow.request.headers.get("x-request-id", ""),
+                            input_tokens=input_tokens, output_tokens=output_tokens,
+                            cost_usd=cost, latency_ms=latency)
+
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _is_ai_host(self, host: str) -> bool:
+        return host in self._intercepted_hosts or any(
+            host.endswith("." + h) for h in self._intercepted_hosts
         )
 
-    # ── Internal helpers ─────────────────────────────────────────────────────
-
-    def _rewrite_for_destination(self, flow: HTTPFlow, original_body: dict, dest: RoutingDestination) -> None:
-        """Rewrite the request URL and body to target a different model/provider."""
-        base_url = dest.base_url or _PROVIDER_BASE_URLS.get(dest.provider, "")
-        if not base_url:
+    def _rewrite_for_destination(
+        self, flow: HTTPFlow, original_body: dict, dest: RoutingDestination
+    ) -> None:
+        """Rewrite request URL, model field, and auth header for destination."""
+        # Look up provider config
+        provider_cfg = self._providers.get(dest.provider)
+        if not provider_cfg:
+            log.warning("Unknown destination provider: %s — skipping rewrite", dest.provider)
             return
 
-        # Rewrite URL
-        if dest.provider == "ollama":
-            flow.request.url = f"{base_url}/api/chat"
-        elif dest.provider == "anthropic":
-            flow.request.url = f"{base_url}/v1/messages"
-        else:
-            flow.request.url = f"{base_url}/v1/chat/completions"
+        base_url = dest.base_url or provider_cfg.base_url
+        if not base_url:
+            log.warning("No base_url for provider %s — skipping rewrite", dest.provider)
+            return
 
-        # Rewrite model field in body
+        base_url = base_url.rstrip("/")
+        fmt = provider_cfg.format
+
+        # Rewrite URL
+        chat_path = get_chat_path(fmt)
+        flow.request.url = f"{base_url}{chat_path}"
+
+        # Rewrite model in body
         new_body = dict(original_body)
         new_body["model"] = dest.model
+
+        # Convert body format if crossing format boundaries
+        ctx = self._flow_contexts.get(flow.id)
+        if ctx and ctx.provider_format != fmt:
+            new_body = _convert_body(new_body, from_fmt=ctx.provider_format, to_fmt=fmt)
+
         flow.request.content = json.dumps(new_body).encode()
+        flow.request.headers["content-length"] = str(len(flow.request.content))
 
-        # Rewrite Authorization header if api_key_env is set
-        if dest.api_key_env:
-            api_key = os.environ.get(dest.api_key_env, "")
-            if api_key:
-                if dest.provider == "anthropic":
-                    flow.request.headers["x-api-key"] = api_key
-                    flow.request.headers.pop("authorization", None)
-                else:
-                    flow.request.headers["authorization"] = f"Bearer {api_key}"
+        # Rewrite auth header
+        api_key = dest.api_key_env and os.environ.get(dest.api_key_env, "")
+        if not api_key:
+            api_key = provider_cfg.get_api_key()
 
-    def _kill_flow(self, flow: HTTPFlow, decision: PolicyDecision, provider: str, model: str, request_id: str) -> None:
+        if api_key and provider_cfg.auth_header:
+            # Remove old auth headers
+            for h in ("authorization", "x-api-key", "api-key"):
+                flow.request.headers.pop(h, None)
+            value = f"{provider_cfg.auth_prefix}{api_key}".strip()
+            flow.request.headers[provider_cfg.auth_header] = value
+
+        # Update host header
+        from airiskguard_gateway.config import ProviderConfig as PC
+        new_host = PC(base_url=base_url, format=fmt).host()
+        if new_host:
+            flow.request.headers["host"] = new_host
+
+    def _kill_flow(
+        self, flow: HTTPFlow, decision: PolicyDecision,
+        ctx: RequestContext, request_id: str,
+    ) -> None:
         body = json.dumps({
             "error": {
                 "type": "policy_violation",
@@ -243,12 +250,11 @@ class AIRiskGuardAddon:
         flow.response = http.Response.make(
             400, body, {"content-type": "application/json", "x-airiskguard": "blocked"},
         )
-        self._log_event(provider, model, "outbound", "blocked", decision.findings, request_id)
+        self._log_event(ctx, "outbound", "blocked", decision.findings, request_id)
 
     def _log_event(
         self,
-        provider: str,
-        model: str,
+        ctx: RequestContext,
         direction: str,
         action_taken: str,
         findings: list,
@@ -261,8 +267,8 @@ class AIRiskGuardAddon:
     ) -> None:
         event = AuditEvent(
             machine_id=self._mid,
-            provider=provider,
-            model=model,
+            provider=ctx.provider_name,
+            model=ctx.model,
             direction=direction,       # type: ignore
             action_taken=action_taken, # type: ignore
             findings=findings,
@@ -303,8 +309,10 @@ class AIRiskGuardAddon:
                 continue
             try:
                 chunk = json.loads(data_str)
+                # Anthropic streaming
                 if "delta" in chunk and "text" in chunk.get("delta", {}):
                     parts.append(chunk["delta"]["text"])
+                # OpenAI-compatible streaming
                 elif choices := chunk.get("choices"):
                     delta = choices[0].get("delta", {})
                     if content := delta.get("content"):
@@ -314,35 +322,39 @@ class AIRiskGuardAddon:
         return "".join(parts)
 
 
-def _extract_token_counts(provider: Provider, body: dict) -> tuple[int, int]:
-    """Extract input/output token counts from a non-streaming response body."""
-    usage = body.get("usage", {})
-    if provider == Provider.ANTHROPIC:
-        return usage.get("input_tokens", 0), usage.get("output_tokens", 0)
-    elif provider in (Provider.OPENAI, Provider.AZURE_OPENAI):
-        return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
-    return 0, 0
+def _convert_body(body: dict, from_fmt: str, to_fmt: str) -> dict:
+    """Best-effort format conversion when routing crosses provider formats."""
+    if from_fmt == to_fmt:
+        return body
 
+    # Anthropic → OpenAI-compatible
+    if from_fmt == "anthropic" and to_fmt in ("openai", "ollama"):
+        messages = list(body.get("messages", []))
+        if system := body.get("system"):
+            messages.insert(0, {"role": "system", "content": system})
+        new = {
+            "model": body.get("model", ""),
+            "messages": messages,
+            "stream": body.get("stream", False),
+        }
+        if max_tokens := body.get("max_tokens"):
+            new["max_tokens"] = max_tokens
+        return new
 
-def _extract_sse_token_counts(raw: str, provider: Provider) -> tuple[int, int]:
-    """Extract token counts from SSE stream — usually in the final data chunk."""
-    for line in reversed(raw.splitlines()):
-        if not line.startswith("data:"):
-            continue
-        data_str = line[5:].strip()
-        if data_str in ("[DONE]", ""):
-            continue
-        try:
-            chunk = json.loads(data_str)
-            usage = chunk.get("usage", {})
-            if provider == Provider.ANTHROPIC:
-                inp = usage.get("input_tokens", 0)
-                out = usage.get("output_tokens", 0)
-            else:
-                inp = usage.get("prompt_tokens", 0)
-                out = usage.get("completion_tokens", 0)
-            if inp or out:
-                return inp, out
-        except (json.JSONDecodeError, KeyError):
-            continue
-    return 0, 0
+    # OpenAI-compatible → Anthropic
+    if from_fmt in ("openai", "ollama") and to_fmt == "anthropic":
+        messages = body.get("messages", [])
+        system_msgs = [m["content"] for m in messages if m.get("role") == "system"]
+        other_msgs = [m for m in messages if m.get("role") != "system"]
+        new = {
+            "model": body.get("model", ""),
+            "messages": other_msgs,
+            "max_tokens": body.get("max_tokens", 4096),
+            "stream": body.get("stream", False),
+        }
+        if system_msgs:
+            new["system"] = " ".join(system_msgs)
+        return new
+
+    # Same format family — return as-is
+    return body

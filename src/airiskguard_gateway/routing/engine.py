@@ -10,7 +10,7 @@ from airiskguard_gateway.routing.models import (
 )
 
 if TYPE_CHECKING:
-    from airiskguard_gateway.models import Category, Finding
+    from airiskguard_gateway.models import Finding
     from airiskguard_gateway.proxy.provider import RequestContext
 
 
@@ -30,7 +30,6 @@ class RoutingEngine:
         context: "RequestContext",
         findings: list["Finding"],
     ) -> RoutingDecision:
-        """Return the first matching routing decision, or allow passthrough."""
         if not self._rules:
             return RoutingDecision(action="allow")
 
@@ -60,6 +59,8 @@ class RoutingEngine:
             return any(kw in prompt_lower for kw in FINANCIAL_KEYWORDS)
         if rule.match == "model_pattern":
             return _glob_match(rule.model_pattern, context.model)
+        if rule.match == "provider":
+            return context.provider_name == rule.provider
         return False
 
     def _make_decision(self, rule: RoutingRule) -> RoutingDecision:
@@ -67,16 +68,13 @@ class RoutingEngine:
             return RoutingDecision(action="block", matched_rule=rule)
         if rule.action == "allow":
             return RoutingDecision(action="allow", matched_rule=rule)
-        # route_to
         dest = self._destinations.get(rule.destination)
         if dest is None:
-            # Destination not configured — fall through to allow
             return RoutingDecision(action="allow", matched_rule=rule)
         return RoutingDecision(action="route_to", destination=dest, matched_rule=rule)
 
 
 def _glob_match(pattern: str, value: str) -> bool:
-    """Simple glob: only supports leading/trailing/middle * wildcards."""
     if not pattern:
         return False
     if pattern == "*":

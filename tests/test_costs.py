@@ -37,8 +37,17 @@ def test_all_known_models_have_pricing():
         assert p["output"] > 0
 
 
-def test_savings_comparison():
-    # Routing from gpt-4o to gpt-4o-mini saves ~94% on input
-    expensive = calculate_cost("gpt-4o", 100_000, 50_000)
-    cheap = calculate_cost("gpt-4o-mini", 100_000, 50_000)
-    assert cheap < expensive * 0.2  # at least 80% savings
+def test_deepseek_very_cheap():
+    cost = calculate_cost("deepseek-chat", 1_000_000, 1_000_000)
+    gpt4o_cost = calculate_cost("gpt-4o", 1_000_000, 1_000_000)
+    assert cost < gpt4o_cost * 0.1  # DeepSeek should be at least 90% cheaper
+
+
+def test_moonshot_pricing():
+    cost = calculate_cost("moonshot-v1-8k", 10_000, 5_000)
+    assert cost > 0
+
+
+def test_glm_pricing():
+    cost = calculate_cost("glm-4", 10_000, 10_000)
+    assert cost > 0

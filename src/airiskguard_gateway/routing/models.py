@@ -7,10 +7,10 @@ from typing import Literal
 @dataclass
 class RoutingDestination:
     """A named target endpoint to route traffic to."""
-    provider: Literal["anthropic", "openai", "ollama", "azure_openai", "google"]
+    provider: str               # any provider name from the registry e.g. "deepseek", "ollama"
     model: str
-    base_url: str = ""          # override API base URL (required for ollama/private endpoints)
-    api_key_env: str = ""       # env var name holding the API key for this destination
+    base_url: str = ""          # override the provider's base_url (optional)
+    api_key_env: str = ""       # override the provider's api_key_env (optional)
 
 
 @dataclass
@@ -21,11 +21,13 @@ class RoutingRule:
         "contains_secrets",
         "contains_financial_data",
         "model_pattern",
+        "provider",
         "always",
     ]
     action: Literal["route_to", "block", "allow"]
     destination: str = ""       # name of RoutingDestination (required when action=route_to)
-    model_pattern: str = ""     # glob-style pattern e.g. "gpt-4*" (only for match=model_pattern)
+    model_pattern: str = ""     # glob e.g. "gpt-4*" (only for match=model_pattern)
+    provider: str = ""          # match specific provider e.g. "openai" (only for match=provider)
 
 
 @dataclass
@@ -35,7 +37,7 @@ class RoutingDecision:
     matched_rule: RoutingRule | None = None
 
 
-# Financial data keywords — simple but catches the most common cases
+# Financial data keywords
 FINANCIAL_KEYWORDS = frozenset([
     "account number", "account balance", "routing number", "wire transfer",
     "iban", "swift", "brokerage", "portfolio", "trade", "equity", "bond",

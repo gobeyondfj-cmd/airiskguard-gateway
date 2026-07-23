@@ -18,6 +18,102 @@ RUN_DIR = Path.home() / ".local" / "run"
 LOG_DIR = Path.home() / ".local" / "log"
 
 
+class ProviderConfig(BaseModel):
+    """Configuration for a single AI provider."""
+    base_url: str
+    format: Literal["openai", "anthropic", "ollama"] = "openai"
+    auth_header: str = "Authorization"
+    auth_prefix: str = "Bearer "
+    api_key_env: str = ""       # env var name for the API key
+
+    def get_api_key(self) -> str:
+        if self.api_key_env:
+            return os.environ.get(self.api_key_env, "")
+        return ""
+
+    def host(self) -> str:
+        """Extract hostname from base_url for intercept matching."""
+        url = self.base_url.rstrip("/")
+        if "://" in url:
+            url = url.split("://", 1)[1]
+        return url.split("/")[0]
+
+
+# Built-in provider definitions — users can override or extend in config.yaml
+BUILTIN_PROVIDERS: dict[str, dict] = {
+    "anthropic": {
+        "base_url": "https://api.anthropic.com",
+        "format": "anthropic",
+        "auth_header": "x-api-key",
+        "auth_prefix": "",
+        "api_key_env": "ANTHROPIC_API_KEY",
+    },
+    "openai": {
+        "base_url": "https://api.openai.com",
+        "format": "openai",
+        "auth_header": "Authorization",
+        "auth_prefix": "Bearer ",
+        "api_key_env": "OPENAI_API_KEY",
+    },
+    "azure_openai": {
+        "base_url": "",           # set base_url in config — varies per deployment
+        "format": "openai",
+        "auth_header": "api-key",
+        "auth_prefix": "",
+        "api_key_env": "AZURE_OPENAI_API_KEY",
+    },
+    "google": {
+        "base_url": "https://generativelanguage.googleapis.com",
+        "format": "openai",
+        "auth_header": "Authorization",
+        "auth_prefix": "Bearer ",
+        "api_key_env": "GOOGLE_API_KEY",
+    },
+    "deepseek": {
+        "base_url": "https://api.deepseek.com",
+        "format": "openai",
+        "auth_header": "Authorization",
+        "auth_prefix": "Bearer ",
+        "api_key_env": "DEEPSEEK_API_KEY",
+    },
+    "moonshot": {
+        "base_url": "https://api.moonshot.cn/v1",
+        "format": "openai",
+        "auth_header": "Authorization",
+        "auth_prefix": "Bearer ",
+        "api_key_env": "MOONSHOT_API_KEY",
+    },
+    "glm": {
+        "base_url": "https://open.bigmodel.cn/api/payi/v1",
+        "format": "openai",
+        "auth_header": "Authorization",
+        "auth_prefix": "Bearer ",
+        "api_key_env": "GLM_API_KEY",
+    },
+    "minimax": {
+        "base_url": "https://api.minimax.chat/v1",
+        "format": "openai",
+        "auth_header": "Authorization",
+        "auth_prefix": "Bearer ",
+        "api_key_env": "MINIMAX_API_KEY",
+    },
+    "mistral": {
+        "base_url": "https://api.mistral.ai/v1",
+        "format": "openai",
+        "auth_header": "Authorization",
+        "auth_prefix": "Bearer ",
+        "api_key_env": "MISTRAL_API_KEY",
+    },
+    "ollama": {
+        "base_url": "http://localhost:11434",
+        "format": "ollama",
+        "auth_header": "",
+        "auth_prefix": "",
+        "api_key_env": "",
+    },
+}
+
+
 class RoutingConfig(BaseModel):
     rules: list[dict] = Field(default_factory=list)
     destinations: dict[str, dict] = Field(default_factory=dict)
@@ -50,11 +146,9 @@ class GatewayConfig(BaseModel):
     listen_host: str = "127.0.0.1"
     listen_port: int = 8080
 
-    # Simple top-level actions (the 80/20 config)
     on_secrets_detected: Literal["block", "redact", "log"] = "block"
     on_pii_detected: Literal["block", "redact", "log"] = "redact"
 
-    # Model allowlist
     allowed_models: list[str] = Field(default_factory=lambda: [
         "claude-opus-4-8",
         "claude-sonnet-4-6",
@@ -64,17 +158,34 @@ class GatewayConfig(BaseModel):
         "gpt-4o",
         "gpt-4o-mini",
         "gpt-4-turbo",
+        "deepseek-chat",
+        "moonshot-v1-8k",
+        "glm-4",
     ])
     model_allowlist_enabled: bool = True
     on_disallowed_model: Literal["block", "log"] = "block"
 
-    # Smart routing
-    routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    # Provider registry — built-ins merged with any user overrides
+    providers: dict[str, dict] = Field(default_factory=dict)
 
-    # Team tier
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
     policy_server: PolicyServerConfig = Field(default_factory=PolicyServerConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
     log_level: str = "INFO"
+
+    def resolved_providers(self) -> dict[str, ProviderConfig]:
+        """Merge built-ins with user-defined providers. User overrides win."""
+        merged: dict[str, dict] = {**BUILTIN_PROVIDERS, **self.providers}
+        return {k: ProviderConfig(**v) for k, v in merged.items()}
+
+    def intercepted_hosts(self) -> set[str]:
+        """All hostnames the proxy should intercept."""
+        hosts: set[str] = set()
+        for p in self.resolved_providers().values():
+            h = p.host()
+            if h:
+                hosts.add(h)
+        return hosts
 
     @classmethod
     def load(cls, path: Path | None = None) -> "GatewayConfig":
@@ -104,11 +215,11 @@ DEFAULT_CONFIG_YAML = """\
 listen_host: "127.0.0.1"
 listen_port: 8080
 
-# What to do when outbound violations are detected
+# What to do when sensitive data is detected outbound
 on_secrets_detected: block    # block | redact | log
 on_pii_detected: redact       # block | redact | log
 
-# Which models your team is allowed to use
+# Approved model list
 model_allowlist_enabled: true
 on_disallowed_model: block
 allowed_models:
@@ -116,32 +227,62 @@ allowed_models:
   - claude-haiku-4-5-20251001
   - gpt-4o
   - gpt-4o-mini
+  - deepseek-chat
+  - moonshot-v1-8k
 
-# Smart routing — route traffic to different models based on content
+# Provider API keys — set the env vars below, or override base_url per provider
+# The gateway reads these to authenticate routed requests.
+# Example: DEEPSEEK_API_KEY=sk-xxx in your environment
+#
+# Built-in providers (no config needed, just set the env var):
+#   anthropic   → ANTHROPIC_API_KEY
+#   openai      → OPENAI_API_KEY
+#   deepseek    → DEEPSEEK_API_KEY   (https://api.deepseek.com)
+#   moonshot    → MOONSHOT_API_KEY   (https://api.moonshot.cn/v1)
+#   glm         → GLM_API_KEY        (https://open.bigmodel.cn/api/payi/v1)
+#   minimax     → MINIMAX_API_KEY    (https://api.minimax.chat/v1)
+#   mistral     → MISTRAL_API_KEY    (https://api.mistral.ai/v1)
+#   ollama      → no key needed      (http://localhost:11434)
+#
+# Add a custom provider or override a built-in:
+# providers:
+#   my_private_llm:
+#     base_url: https://llm.internal.company.com/v1
+#     format: openai           # openai | anthropic | ollama
+#     auth_header: Authorization
+#     auth_prefix: "Bearer "
+#     api_key_env: MY_LLM_API_KEY
+
+# Smart routing rules — evaluated in order, first match wins
 # routing:
 #   rules:
 #     - match: contains_pii
 #       action: route_to
-#       destination: internal_llm
+#       destination: local_ollama    # send PII to local model, never leaves machine
+#     - match: contains_financial_data
+#       action: route_to
+#       destination: deepseek_cheap  # financial data → cheaper model
 #     - match: model_pattern
 #       model_pattern: "gpt-4*"
 #       action: route_to
-#       destination: gpt_4o_mini
+#       destination: gpt_mini        # downgrade expensive models
 #   destinations:
-#     internal_llm:
+#     local_ollama:
 #       provider: ollama
-#       base_url: http://localhost:11434
 #       model: llama3.2
-#     gpt_4o_mini:
+#     deepseek_cheap:
+#       provider: deepseek
+#       model: deepseek-chat
+#     gpt_mini:
 #       provider: openai
 #       model: gpt-4o-mini
 
-# Team tier: connect to a policy server for centralized management
+# Team tier
 policy_server:
   url: ""
   api_key: ""
 
 audit:
-  local_path: ""      # default: ~/.local/share/airiskguard-gateway/audit.jsonl
+  local_path: ""
   ship_to_server: false
 """

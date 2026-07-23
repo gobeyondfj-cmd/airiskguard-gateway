@@ -24,6 +24,24 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "gemini-1.5-pro":               {"input": 3.5,   "output": 10.5},
     "gemini-1.5-flash":             {"input": 0.075, "output": 0.30},
     "gemini-2.0-flash":             {"input": 0.10,  "output": 0.40},
+    # DeepSeek
+    "deepseek-chat":                {"input": 0.14,  "output": 0.28},
+    "deepseek-reasoner":            {"input": 0.55,  "output": 2.19},
+    # Moonshot
+    "moonshot-v1-8k":               {"input": 0.12,  "output": 0.12},
+    "moonshot-v1-32k":              {"input": 0.24,  "output": 0.24},
+    "moonshot-v1-128k":             {"input": 0.60,  "output": 0.60},
+    # GLM (Zhipu AI)
+    "glm-4":                        {"input": 0.14,  "output": 0.14},
+    "glm-4-flash":                  {"input": 0.01,  "output": 0.01},
+    "glm-4-air":                    {"input": 0.07,  "output": 0.07},
+    # MiniMax
+    "abab6.5s-chat":                {"input": 0.10,  "output": 0.10},
+    "abab5.5-chat":                 {"input": 0.015, "output": 0.015},
+    # Mistral
+    "mistral-large-latest":         {"input": 2.0,   "output": 6.0},
+    "mistral-small-latest":         {"input": 0.1,   "output": 0.3},
+    "codestral-latest":             {"input": 0.2,   "output": 0.6},
 }
 
 # Fallback pricing for unknown models (conservative estimate)
