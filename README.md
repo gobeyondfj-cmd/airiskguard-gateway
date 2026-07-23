@@ -1,5 +1,9 @@
 # AIRiskGuard Gateway
 
+![PyPI](https://img.shields.io/pypi/v/airiskguard-gateway)
+![License: MIT](https://img.shields.io/badge/License-MIT-00d4ff.svg)
+![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
+
 AI traffic management for developer teams. A local HTTPS proxy that sits between your developers and AI provider APIs — routing, logging, and protecting every AI call.
 
 **Free (MIT) · pip install · works with Claude Code, Cursor, Copilot, any AI tool**
@@ -154,5 +158,5 @@ Start at [airiskguard.ai](https://airiskguard.ai/#pricing).
 
 ## License
 
-Proxy: MIT  
-Policy server + dashboard: Proprietary (Team tier)
+Proxy core: **MIT** — free to use, modify, and distribute.
+Policy server + dashboard (`src/airiskguard_gateway/policy_server/`): **Proprietary** — requires a Team license. See [airiskguard.ai/pricing](https://airiskguard.ai/#pricing).
