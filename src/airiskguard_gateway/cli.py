@@ -34,7 +34,9 @@ def main() -> None:
 @main.command()
 @click.option("--config", "-c", type=click.Path(), help="Path to config.yaml")
 @click.option("--daemon", "-d", is_flag=True, help="Run as background daemon")
-def start(config: str | None, daemon: bool) -> None:
+@click.option("--mode", type=click.Choice(["api", "proxy"]), default="api",
+              help="api: HTTP API proxy (recommended for Claude Code/SDKs). proxy: transparent HTTPS proxy.")
+def start(config: str | None, daemon: bool, mode: str) -> None:
     """Start the gateway proxy."""
     cfg = GatewayConfig.load(Path(config) if config else None)
     _setup_logging(cfg.log_level)
@@ -43,30 +45,57 @@ def start(config: str | None, daemon: bool) -> None:
         _daemonize(cfg)
         return
 
-    _install_cert_if_needed()
     cert_path = CertManager().cert_pem_path()
 
-    console.print(f"\n[bold cyan]◆ AIRiskGuard Gateway[/] v0.1.0")
+    console.print(f"\n[bold cyan]◆ AIRiskGuard Gateway[/] v0.5.0  [dim](mode: {mode})[/]")
     console.print(f"  Listening on [green]{cfg.listen_host}:{cfg.listen_port}[/]")
     console.print()
-    console.print("  [bold]Set these in your shell:[/]")
-    console.print(f"    [yellow]export HTTPS_PROXY=http://{cfg.listen_host}:{cfg.listen_port}[/]")
-    console.print(f"    [yellow]export NODE_EXTRA_CA_CERTS={cert_path}[/]  [dim]# for Claude Code[/]")
+
+    if mode == "api":
+        console.print("  [bold]Set these in your shell:[/]")
+        console.print(f"    [yellow]export ANTHROPIC_BASE_URL=http://{cfg.listen_host}:{cfg.listen_port}/anthropic[/]  [dim]# Claude Code[/]")
+        console.print(f"    [yellow]export OPENAI_BASE_URL=http://{cfg.listen_host}:{cfg.listen_port}/openai[/]      [dim]# Codex CLI / OpenAI[/]")
+        console.print(f"  [dim]No CA cert needed in API mode.[/]")
+    else:
+        _install_cert_if_needed()
+        console.print("  [bold]Set these in your shell:[/]")
+        console.print(f"    [yellow]export HTTPS_PROXY=http://{cfg.listen_host}:{cfg.listen_port}[/]")
+        console.print(f"    [yellow]export NODE_EXTRA_CA_CERTS={cert_path}[/]  [dim]# for Claude Code[/]")
+
     console.print()
-    console.print(f"  Secrets: [cyan]{cfg.on_secrets_detected}[/]  "
-                  f"PII: [cyan]{cfg.on_pii_detected}[/]")
-    console.print(f"  Model allowlist: {'[green]enabled[/]' if cfg.model_allowlist_enabled else '[dim]disabled[/]'}")
+    console.print(f"  Secrets: [cyan]{cfg.on_secrets_detected}[/]  PII: [cyan]{cfg.on_pii_detected}[/]")
     console.print(f"  Audit log: [dim]{cfg.audit.resolved_path()}[/]")
-    if cfg.policy_server.url:
-        console.print(f"  Policy server: [cyan]{cfg.policy_server.url}[/]")
     console.print()
     console.print("  Press [dim]Ctrl+C[/] to stop.\n")
 
-    from airiskguard_gateway.proxy.server import run_proxy
-    try:
-        asyncio.run(run_proxy(cfg))
-    except KeyboardInterrupt:
-        console.print("\n[dim]Gateway stopped.[/]")
+    if mode == "api":
+        import uvicorn
+        from airiskguard_gateway.audit.logger import AuditLogger
+        from airiskguard_gateway.policy.engine import PolicyEngine
+        from airiskguard_gateway.routing.engine import RoutingEngine
+        from airiskguard_gateway.scanner.engine import ScanEngine
+        from airiskguard_gateway.proxy.api_server import create_api_server
+
+        logger = AuditLogger(cfg)
+        scanner = ScanEngine(cfg)
+        policy = PolicyEngine(cfg)
+        router = RoutingEngine(
+            rules=cfg.routing.parsed_rules(),
+            destinations=cfg.routing.parsed_destinations(),
+            sticky_sessions=cfg.routing.sticky_sessions,
+            session_ttl_hours=cfg.routing.session_ttl_hours,
+        )
+        app = create_api_server(cfg, logger, scanner, policy, router)
+        try:
+            uvicorn.run(app, host=cfg.listen_host, port=cfg.listen_port, log_level="warning")
+        except KeyboardInterrupt:
+            console.print("\n[dim]Gateway stopped.[/]")
+    else:
+        from airiskguard_gateway.proxy.server import run_proxy
+        try:
+            asyncio.run(run_proxy(cfg))
+        except KeyboardInterrupt:
+            console.print("\n[dim]Gateway stopped.[/]")
 
 
 @main.command()
@@ -104,31 +133,36 @@ def setup() -> None:
 
     shell_file = "~/.zshrc" if platform.system() == "Darwin" else "~/.bashrc"
     console.print(f"  [dim]# Add to {shell_file}[/]")
+    console.print()
+    console.print(f"  [bold]API mode[/] [dim](recommended — no CA cert needed):[/]")
+    console.print(f"  [yellow]export ANTHROPIC_BASE_URL=http://{cfg.listen_host}:{cfg.listen_port}/anthropic[/]  [dim]# Claude Code[/]")
+    console.print(f"  [yellow]export OPENAI_BASE_URL=http://{cfg.listen_host}:{cfg.listen_port}/openai[/]      [dim]# Codex CLI[/]")
+    console.print()
+    console.print(f"  [bold]Transparent proxy mode[/] [dim](for Cursor and other tools):[/]")
     console.print(f"  [yellow]export HTTPS_PROXY=http://{cfg.listen_host}:{cfg.listen_port}[/]")
     console.print(f"  [yellow]export NODE_EXTRA_CA_CERTS={cert_path}[/]")
     console.print()
 
-    # Claude Code specific
-    console.print("[bold]Claude Code[/] — also needs NODE_EXTRA_CA_CERTS for HTTPS interception:")
-    console.print(f"  [dim]NODE_EXTRA_CA_CERTS is already covered by the export above.[/]")
+    # Per-tool instructions
+    console.print("[bold]Claude Code[/]")
+    console.print(f"  [yellow]export ANTHROPIC_BASE_URL=http://{cfg.listen_host}:{cfg.listen_port}/anthropic[/]")
     console.print()
-
-    # Codex CLI
-    console.print("[bold]OpenAI Codex CLI[/] — uses HTTPS_PROXY automatically.")
+    console.print("[bold]OpenAI Codex CLI[/]")
+    console.print(f"  [yellow]export OPENAI_BASE_URL=http://{cfg.listen_host}:{cfg.listen_port}/openai[/]")
     console.print()
-
-    # Cursor
-    console.print("[bold]Cursor[/] — go to Settings → HTTP Proxy → set to:")
-    console.print(f"  [yellow]http://{cfg.listen_host}:{cfg.listen_port}[/]")
+    console.print("[bold]Cursor[/]")
+    console.print(f"  Settings → Features → HTTP Proxy → [yellow]http://{cfg.listen_host}:{cfg.listen_port}[/]")
     console.print()
-
+    console.print("[bold]Start the gateway:[/]")
+    console.print("  [cyan]airiskguard-gateway start[/]              [dim]# API mode (default, no cert needed)[/]")
+    console.print("  [cyan]airiskguard-gateway start --mode proxy[/]  [dim]# Transparent proxy mode[/]")
+    console.print()
     console.print("[bold]Verify it's working:[/]")
-    console.print("  1. Run: [cyan]airiskguard-gateway start[/]")
-    console.print("  2. Make any AI request through your tool")
-    console.print("  3. Run: [cyan]airiskguard-gateway logs --tail 5[/]")
-    console.print("     You should see the request appear in the log.")
+    console.print("  1. Start: [cyan]airiskguard-gateway start[/]")
+    console.print("  2. Make any AI request through Claude Code or Cursor")
+    console.print("  3. Check: [cyan]airiskguard-gateway logs --tail 5[/]")
     console.print()
-    console.print("[green]Setup complete.[/] Run [cyan]airiskguard-gateway start[/] to begin.\n")
+    console.print("[green]Setup complete.[/]\n")
 
 
 

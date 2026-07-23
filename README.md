@@ -20,47 +20,52 @@ AI traffic management for developer teams. A local HTTPS proxy that sits between
 
 ```bash
 pip install airiskguard
-sudo airiskguard-gateway setup    # generate CA cert + print shell config
-airiskguard-gateway start
+sudo airiskguard-gateway setup    # generate CA cert + print per-tool config
+airiskguard-gateway start         # starts in API mode (default)
 ```
 
-`setup` generates the CA certificate, installs it to your system trust store, and prints the exact lines to add to your shell config.
+## Two modes
 
-### Claude Code
+### API mode (recommended — no CA cert needed)
+
+The gateway runs as an HTTP server. Point AI tools at it directly via `BASE_URL`.
 
 ```bash
-# Add to ~/.zshrc or ~/.bashrc
+airiskguard-gateway start   # default: API mode on localhost:8080
+```
+
+**Claude Code:**
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic
+```
+
+**OpenAI Codex CLI:**
+```bash
+export OPENAI_BASE_URL=http://127.0.0.1:8080/openai
+```
+
+**DeepSeek / Moonshot / any provider:**
+```bash
+export OPENAI_BASE_URL=http://127.0.0.1:8080/deepseek   # or moonshot, glm, etc.
+```
+
+### Transparent proxy mode (for Cursor and generic tools)
+
+```bash
+airiskguard-gateway start --mode proxy
+```
+
+```bash
 export HTTPS_PROXY=http://127.0.0.1:8080
 export NODE_EXTRA_CA_CERTS=~/.config/airiskguard-gateway/mitmproxy-ca-cert.pem
 ```
 
-Then restart Claude Code. Every AI call is now proxied.
-
-### Cursor
-
-Settings → Features → HTTP Proxy → set to `http://127.0.0.1:8080`
-
-The CA cert must also be trusted — `sudo airiskguard-gateway setup` handles this.
-
-### OpenAI Codex CLI
-
-```bash
-export HTTPS_PROXY=http://127.0.0.1:8080
-```
-
-Codex CLI respects `HTTPS_PROXY` automatically.
-
-### Any other AI tool
-
-Set `HTTPS_PROXY=http://127.0.0.1:8080`. If the tool uses Node.js, also set `NODE_EXTRA_CA_CERTS`.
+**Cursor:** Settings → Features → HTTP Proxy → `http://127.0.0.1:8080`
 
 ### Verify it's working
 
 ```bash
-airiskguard-gateway start &
-# make any AI request in Claude Code or Cursor
-airiskguard-gateway logs --tail 5
-# you should see the request appear
+airiskguard-gateway logs --tail 5   # should show requests after you use Claude Code
 ```
 
 ## Configuration
