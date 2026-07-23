@@ -47,7 +47,7 @@ def test_allows_model_in_allowlist():
 
 def test_log_action_on_low_severity():
     cfg = GatewayConfig()
-    cfg.outbound.action = "log"
+    cfg.on_secrets_detected = "log"
     engine = PolicyEngine(cfg)
     # Low severity should not trigger (below medium threshold)
     decision = engine.evaluate_outbound([_finding(Severity.LOW)])

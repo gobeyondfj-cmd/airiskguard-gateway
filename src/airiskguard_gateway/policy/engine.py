@@ -27,40 +27,50 @@ class PolicyEngine:
         if not findings:
             return PolicyDecision(action="allow")
 
-        action = self._config.outbound.action
-        threshold = Severity.MEDIUM  # only act on medium+
+        triggered: list[Finding] = []
+        worst_action = "allow"
 
-        triggered = [f for f in findings if SEVERITY_ORDER[f.severity] >= SEVERITY_ORDER[threshold]]
+        for f in findings:
+            if SEVERITY_ORDER[f.severity] < SEVERITY_ORDER[Severity.MEDIUM]:
+                continue
+            triggered.append(f)
+            # Determine action based on category
+            if f.category == Category.HARDCODED_SECRETS:
+                action = self._config.on_secrets_detected
+            elif f.category == Category.PII_LEAKAGE:
+                action = self._config.on_pii_detected
+            else:
+                action = self._config.on_secrets_detected  # default to stricter
+
+            if _action_severity(action) > _action_severity(worst_action):
+                worst_action = action
+
         if not triggered:
             return PolicyDecision(action="allow", findings=findings)
 
         return PolicyDecision(
-            action=action,
+            action=worst_action,  # type: ignore
             findings=triggered,
-            message=f"{len(triggered)} policy violation(s) detected in outbound request.",
+            message=f"{len(triggered)} policy violation(s) in outbound request.",
         )
 
     def evaluate_inbound(self, findings: list[Finding]) -> PolicyDecision:
         if not findings:
             return PolicyDecision(action="allow")
-
-        action = self._config.inbound.action
         triggered = [f for f in findings if SEVERITY_ORDER[f.severity] >= SEVERITY_ORDER[Severity.MEDIUM]]
-
         if not triggered:
             return PolicyDecision(action="allow", findings=findings)
-
         return PolicyDecision(
-            action=action,
+            action="log",
             findings=triggered,
-            message=f"{len(triggered)} policy violation(s) detected in inbound response.",
+            message=f"{len(triggered)} vulnerability pattern(s) in AI-generated code.",
         )
 
     def check_model_allowed(self, model: str) -> PolicyDecision:
-        if not self._config.model_allowlist.enabled:
+        if not self._config.model_allowlist_enabled:
             return PolicyDecision(action="allow")
 
-        allowed = self._config.model_allowlist.allowed_models
+        allowed = self._config.allowed_models
         if model in allowed or any(model.startswith(m) for m in allowed):
             return PolicyDecision(action="allow")
 
@@ -70,15 +80,17 @@ class PolicyEngine:
             category=Category.MODEL_POLICY,
             severity=Severity.HIGH,
             title=f"Model not in allowlist: {model}",
-            description=f"The requested model '{model}' is not in the organization's approved model list.",
+            description=f"The requested model '{model}' is not in the approved list.",
             evidence=f"Requested: {model}",
             location="model_allowlist",
-            remediation=f"Use an approved model. Allowed: {', '.join(allowed[:5])}{'...' if len(allowed) > 5 else ''}",
+            remediation=f"Use an approved model: {', '.join(allowed[:5])}",
         )
-
-        action = self._config.model_allowlist.action
         return PolicyDecision(
-            action=action,
+            action=self._config.on_disallowed_model,
             findings=[finding],
             message=f"Model '{model}' is not in the approved allowlist.",
         )
+
+
+def _action_severity(action: str) -> int:
+    return {"allow": 0, "log": 1, "redact": 2, "block": 3}.get(action, 0)

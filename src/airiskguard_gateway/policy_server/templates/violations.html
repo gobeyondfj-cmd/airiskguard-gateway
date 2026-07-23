@@ -1,42 +1,49 @@
-<!-- Violations table partial -->
+<!-- Events table partial -->
 {% if events %}
 <table class="w-full text-sm">
     <thead>
         <tr class="text-left border-b border-white/10">
             <th class="pb-2 font-medium" style="color:#7d8fa8">Time</th>
-            <th class="pb-2 font-medium" style="color:#7d8fa8">Provider</th>
             <th class="pb-2 font-medium" style="color:#7d8fa8">Model</th>
-            <th class="pb-2 font-medium" style="color:#7d8fa8">Direction</th>
             <th class="pb-2 font-medium" style="color:#7d8fa8">Action</th>
-            <th class="pb-2 font-medium text-right" style="color:#7d8fa8">Findings</th>
+            <th class="pb-2 font-medium" style="color:#7d8fa8">Routed to</th>
+            <th class="pb-2 font-medium text-right" style="color:#7d8fa8">Cost</th>
+            <th class="pb-2 font-medium text-right" style="color:#7d8fa8">Tokens</th>
         </tr>
     </thead>
     <tbody>
         {% for e in events %}
         <tr class="border-b border-white/5 hover:bg-white/2 transition-colors">
-            <td class="py-2.5 pr-4" style="color:#7d8fa8">
+            <td class="py-2.5 pr-4 text-xs" style="color:#7d8fa8">
                 {{ e.timestamp.strftime('%m-%d %H:%M:%S') }}
             </td>
-            <td class="py-2.5 pr-4 text-cyan-400">{{ e.provider }}</td>
-            <td class="py-2.5 pr-4 text-white font-mono text-xs">
-                {{ e.model[:32] }}{% if e.model|length > 32 %}…{% endif %}
+            <td class="py-2.5 pr-4 font-mono text-xs text-white">
+                {{ e.model[:30] }}{% if e.model|length > 30 %}…{% endif %}
             </td>
-            <td class="py-2.5 pr-4" style="color:#7d8fa8">{{ e.direction }}</td>
             <td class="py-2.5 pr-4">
                 {% if e.action_taken == 'blocked' %}
                     <span class="badge-blocked px-2 py-0.5 rounded-full text-xs font-medium">blocked</span>
                 {% elif e.action_taken == 'redacted' %}
                     <span class="badge-redacted px-2 py-0.5 rounded-full text-xs font-medium">redacted</span>
+                {% elif e.action_taken == 'routed' %}
+                    <span class="px-2 py-0.5 rounded-full text-xs font-medium" style="background:rgba(124,58,237,0.15);color:#a78bfa;border:1px solid rgba(124,58,237,0.3)">routed</span>
                 {% else %}
                     <span class="badge-allowed px-2 py-0.5 rounded-full text-xs font-medium">allowed</span>
                 {% endif %}
             </td>
-            <td class="py-2.5 text-right">
-                {% if e.findings_count > 0 %}
-                    <span class="text-red-400 font-medium">{{ e.findings_count }}</span>
+            <td class="py-2.5 pr-4 text-xs" style="color:#7d8fa8">
+                {{ e.routed_to or '—' }}
+            </td>
+            <td class="py-2.5 pr-4 text-right text-xs">
+                {% if e.cost_usd %}
+                    <span style="color:#00d4ff">${{ "%.4f"|format(e.cost_usd) }}</span>
                 {% else %}
-                    <span style="color:#7d8fa8">0</span>
+                    <span style="color:#4a5568">—</span>
                 {% endif %}
+            </td>
+            <td class="py-2.5 text-right text-xs" style="color:#7d8fa8">
+                {% set total_tok = (e.input_tokens or 0) + (e.output_tokens or 0) %}
+                {% if total_tok %}{{ "{:,}".format(total_tok) }}{% else %}—{% endif %}
             </td>
         </tr>
         {% endfor %}
@@ -45,6 +52,6 @@
 {% else %}
 <div class="text-center py-12" style="color:#7d8fa8">
     <p class="text-lg mb-2">No events yet</p>
-    <p class="text-sm">Start the gateway and make some AI API calls to see activity here.</p>
+    <p class="text-sm">Start the gateway and make AI API calls to see activity here.</p>
 </div>
 {% endif %}

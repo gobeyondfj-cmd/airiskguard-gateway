@@ -9,6 +9,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from airiskguard_gateway.routing.models import RoutingDestination, RoutingRule
+
 
 CONFIG_DIR = Path.home() / ".config" / "airiskguard-gateway"
 DATA_DIR = Path.home() / ".local" / "share" / "airiskguard-gateway"
@@ -16,29 +18,15 @@ RUN_DIR = Path.home() / ".local" / "run"
 LOG_DIR = Path.home() / ".local" / "log"
 
 
-class OutboundPolicy(BaseModel):
-    action: Literal["block", "redact", "log"] = "block"
-    enabled_checkers: list[str] = ["secrets", "pii"]
+class RoutingConfig(BaseModel):
+    rules: list[dict] = Field(default_factory=list)
+    destinations: dict[str, dict] = Field(default_factory=dict)
 
+    def parsed_rules(self) -> list[RoutingRule]:
+        return [RoutingRule(**r) for r in self.rules]
 
-class InboundPolicy(BaseModel):
-    action: Literal["block", "log"] = "log"
-    enabled_checkers: list[str] = ["vuln_code"]
-
-
-class ModelAllowlist(BaseModel):
-    enabled: bool = True
-    allowed_models: list[str] = [
-        "claude-opus-4-8",
-        "claude-sonnet-4-6",
-        "claude-haiku-4-5-20251001",
-        "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku-20241022",
-        "gpt-4o",
-        "gpt-4o-mini",
-        "gpt-4-turbo",
-    ]
-    action: Literal["block", "log"] = "block"
+    def parsed_destinations(self) -> dict[str, RoutingDestination]:
+        return {k: RoutingDestination(**v) for k, v in self.destinations.items()}
 
 
 class PolicyServerConfig(BaseModel):
@@ -61,9 +49,29 @@ class AuditConfig(BaseModel):
 class GatewayConfig(BaseModel):
     listen_host: str = "127.0.0.1"
     listen_port: int = 8080
-    outbound: OutboundPolicy = Field(default_factory=OutboundPolicy)
-    inbound: InboundPolicy = Field(default_factory=InboundPolicy)
-    model_allowlist: ModelAllowlist = Field(default_factory=ModelAllowlist)
+
+    # Simple top-level actions (the 80/20 config)
+    on_secrets_detected: Literal["block", "redact", "log"] = "block"
+    on_pii_detected: Literal["block", "redact", "log"] = "redact"
+
+    # Model allowlist
+    allowed_models: list[str] = Field(default_factory=lambda: [
+        "claude-opus-4-8",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4-turbo",
+    ])
+    model_allowlist_enabled: bool = True
+    on_disallowed_model: Literal["block", "log"] = "block"
+
+    # Smart routing
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
+
+    # Team tier
     policy_server: PolicyServerConfig = Field(default_factory=PolicyServerConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
     log_level: str = "INFO"
@@ -91,47 +99,49 @@ def machine_id() -> str:
 
 DEFAULT_CONFIG_YAML = """\
 # AIRiskGuard Gateway configuration
-# Full docs: https://docs.airiskguard.ai/gateway/config
+# Docs: https://docs.airiskguard.ai/gateway/config
 
 listen_host: "127.0.0.1"
 listen_port: 8080
-log_level: "INFO"
 
-outbound:
-  # action: block | redact | log
-  action: block
-  enabled_checkers:
-    - secrets
-    - pii
+# What to do when outbound violations are detected
+on_secrets_detected: block    # block | redact | log
+on_pii_detected: redact       # block | redact | log
 
-inbound:
-  # action: block | log
-  # Note: block holds the response; log is non-blocking (scans after stream closes)
-  action: log
-  enabled_checkers:
-    - vuln_code
+# Which models your team is allowed to use
+model_allowlist_enabled: true
+on_disallowed_model: block
+allowed_models:
+  - claude-sonnet-4-6
+  - claude-haiku-4-5-20251001
+  - gpt-4o
+  - gpt-4o-mini
 
-model_allowlist:
-  enabled: true
-  action: block
-  allowed_models:
-    - claude-opus-4-8
-    - claude-sonnet-4-6
-    - claude-haiku-4-5-20251001
-    - claude-3-5-sonnet-20241022
-    - claude-3-5-haiku-20241022
-    - gpt-4o
-    - gpt-4o-mini
+# Smart routing — route traffic to different models based on content
+# routing:
+#   rules:
+#     - match: contains_pii
+#       action: route_to
+#       destination: internal_llm
+#     - match: model_pattern
+#       model_pattern: "gpt-4*"
+#       action: route_to
+#       destination: gpt_4o_mini
+#   destinations:
+#     internal_llm:
+#       provider: ollama
+#       base_url: http://localhost:11434
+#       model: llama3.2
+#     gpt_4o_mini:
+#       provider: openai
+#       model: gpt-4o-mini
 
 # Team tier: connect to a policy server for centralized management
 policy_server:
   url: ""
   api_key: ""
-  sync_interval_seconds: 60
 
 audit:
-  # local_path: leave empty to use default (~/.local/share/airiskguard-gateway/audit.jsonl)
-  local_path: ""
-  max_size_mb: 100
+  local_path: ""      # default: ~/.local/share/airiskguard-gateway/audit.jsonl
   ship_to_server: false
 """

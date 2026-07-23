@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, UTC
 
 from sqlalchemy import (
-    Boolean, DateTime, ForeignKey, Integer, String, Text,
+    Boolean, DateTime, Float, ForeignKey, Integer, String, Text,
     func, Index,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -92,6 +92,10 @@ class AuditEventRecord(Base):
     action_taken: Mapped[str] = mapped_column(String(20), nullable=False)
     direction: Mapped[str] = mapped_column(String(10), nullable=False)
     findings_count: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    routed_to: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     team: Mapped["Team | None"] = relationship(back_populates="audit_events")
 

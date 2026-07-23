@@ -83,8 +83,11 @@ class AuditEventIn(BaseModel):
     action_taken: str
     findings: list[dict] = Field(default_factory=list)
     request_id: str = ""
-    token_count_estimate: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
     latency_ms: int | None = None
+    routed_to: str | None = None
 
 
 class AuditEventOut(BaseModel):

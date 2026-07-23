@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -27,12 +27,14 @@ async def ingest_events(
     for e in events:
         try:
             ts = datetime.fromisoformat(e.timestamp.rstrip("Z"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
         except ValueError:
             ts = datetime.now(UTC)
 
         record = AuditEventRecord(
             id=str(uuid.uuid4()),
-            team_id=None,  # Resolved via API key auth in full implementation
+            team_id=None,
             machine_id=e.machine_id,
             event_json=json.dumps(e.model_dump()),
             timestamp=ts,
@@ -41,10 +43,13 @@ async def ingest_events(
             action_taken=e.action_taken,
             direction=e.direction,
             findings_count=len(e.findings),
+            input_tokens=e.input_tokens or 0,
+            output_tokens=e.output_tokens or 0,
+            cost_usd=e.cost_usd or 0.0,
+            routed_to=e.routed_to,
         )
         records.append(record)
 
-        # Slack notification for blocked requests
         if e.action_taken == "blocked" or any(
             f.get("severity") in ("critical", "high") for f in e.findings
         ):
@@ -53,7 +58,7 @@ async def ingest_events(
             await _maybe_notify_slack(db, record, e)
 
     for r in records:
-        if r not in db.new:  # Avoid double-add
+        if r not in db.new:
             db.add(r)
 
     await db.commit()
@@ -69,9 +74,7 @@ async def list_events(
     since_hours: int = Query(24),
     db: AsyncSession = Depends(get_db),
 ) -> list[AuditEventRecord]:
-    from datetime import timedelta
     since = datetime.now(UTC) - timedelta(hours=since_hours)
-
     filters = [AuditEventRecord.timestamp >= since]
     if action:
         filters.append(AuditEventRecord.action_taken == action)
@@ -93,36 +96,87 @@ async def event_stats(
     since_hours: int = Query(24),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    from datetime import timedelta
     since = datetime.now(UTC) - timedelta(hours=since_hours)
-
-    total = await db.scalar(
-        select(func.count()).where(AuditEventRecord.timestamp >= since)
-    )
+    total = await db.scalar(select(func.count()).where(AuditEventRecord.timestamp >= since)) or 0
     blocked = await db.scalar(
-        select(func.count()).where(
-            AuditEventRecord.timestamp >= since,
-            AuditEventRecord.action_taken == "blocked",
-        )
-    )
+        select(func.count()).where(AuditEventRecord.timestamp >= since, AuditEventRecord.action_taken == "blocked")
+    ) or 0
     redacted = await db.scalar(
-        select(func.count()).where(
-            AuditEventRecord.timestamp >= since,
-            AuditEventRecord.action_taken == "redacted",
-        )
-    )
-
+        select(func.count()).where(AuditEventRecord.timestamp >= since, AuditEventRecord.action_taken == "redacted")
+    ) or 0
     return {
-        "total": total or 0,
-        "blocked": blocked or 0,
-        "redacted": redacted or 0,
-        "allowed": (total or 0) - (blocked or 0) - (redacted or 0),
+        "total": total,
+        "blocked": blocked,
+        "redacted": redacted,
+        "allowed": total - blocked - redacted,
         "since_hours": since_hours,
     }
 
 
+@router.get("/costs")
+async def cost_breakdown(
+    since_hours: int = Query(720),  # default 30 days
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Cost breakdown by model, last N hours."""
+    since = datetime.now(UTC) - timedelta(hours=since_hours)
+
+    # Total cost
+    total_cost = await db.scalar(
+        select(func.sum(AuditEventRecord.cost_usd)).where(AuditEventRecord.timestamp >= since)
+    ) or 0.0
+
+    total_tokens_in = await db.scalar(
+        select(func.sum(AuditEventRecord.input_tokens)).where(AuditEventRecord.timestamp >= since)
+    ) or 0
+    total_tokens_out = await db.scalar(
+        select(func.sum(AuditEventRecord.output_tokens)).where(AuditEventRecord.timestamp >= since)
+    ) or 0
+
+    # Cost + tokens by model
+    model_rows = await db.execute(
+        select(
+            AuditEventRecord.model,
+            func.sum(AuditEventRecord.cost_usd).label("cost"),
+            func.sum(AuditEventRecord.input_tokens).label("input_tokens"),
+            func.sum(AuditEventRecord.output_tokens).label("output_tokens"),
+            func.count(AuditEventRecord.id).label("requests"),
+        )
+        .where(AuditEventRecord.timestamp >= since)
+        .group_by(AuditEventRecord.model)
+        .order_by(func.sum(AuditEventRecord.cost_usd).desc())
+    )
+    by_model = [
+        {
+            "model": row.model,
+            "cost_usd": round(row.cost or 0, 4),
+            "input_tokens": row.input_tokens or 0,
+            "output_tokens": row.output_tokens or 0,
+            "requests": row.requests or 0,
+            "pct": round((row.cost or 0) / total_cost * 100, 1) if total_cost else 0,
+        }
+        for row in model_rows
+    ]
+
+    # Routed requests (savings proxy)
+    routed = await db.scalar(
+        select(func.count()).where(
+            AuditEventRecord.timestamp >= since,
+            AuditEventRecord.routed_to.isnot(None),
+        )
+    ) or 0
+
+    return {
+        "since_hours": since_hours,
+        "total_cost_usd": round(total_cost, 4),
+        "total_input_tokens": total_tokens_in,
+        "total_output_tokens": total_tokens_out,
+        "routed_requests": routed,
+        "by_model": by_model,
+    }
+
+
 async def _maybe_notify_slack(db: AsyncSession, record: AuditEventRecord, event: AuditEventIn) -> None:
-    """Fire Slack webhook if team has one configured."""
     if not record.team_id:
         return
     team = await db.get(Team, record.team_id)
@@ -147,4 +201,4 @@ async def _maybe_notify_slack(db: AsyncSession, record: AuditEventRecord, event:
         async with httpx.AsyncClient(timeout=5) as client:
             await client.post(team.slack_webhook_url, json=payload)
     except Exception:
-        pass  # Non-blocking
+        pass

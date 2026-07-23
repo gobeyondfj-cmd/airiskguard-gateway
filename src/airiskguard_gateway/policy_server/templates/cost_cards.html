@@ -1,0 +1,22 @@
+<!-- Cost cards partial — HTMX-refreshed every 60s -->
+<div id="cost-cards" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"
+     hx-get="/dashboard/costs"
+     hx-trigger="every 60s"
+     hx-swap="outerHTML">
+    <div class="card p-5">
+        <p class="text-xs mb-1" style="color:#7d8fa8">Total spend (30d)</p>
+        <p class="text-3xl font-bold" style="color:#00d4ff">${{ "%.2f"|format(cost_data.total_cost_usd) }}</p>
+    </div>
+    <div class="card p-5">
+        <p class="text-xs mb-1" style="color:#7d8fa8">Total tokens</p>
+        <p class="text-3xl font-bold text-white">{{ "{:,}".format(cost_data.total_input_tokens + cost_data.total_output_tokens) }}</p>
+    </div>
+    <div class="card p-5">
+        <p class="text-xs mb-1" style="color:#7d8fa8">Routed requests</p>
+        <p class="text-3xl font-bold text-purple-400">{{ cost_data.routed_requests }}</p>
+    </div>
+    <div class="card p-5">
+        <p class="text-xs mb-1" style="color:#7d8fa8">Blocked (24h)</p>
+        <p class="text-3xl font-bold text-red-400">{{ stats.blocked }}</p>
+    </div>
+</div>
