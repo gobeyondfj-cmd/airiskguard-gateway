@@ -53,9 +53,9 @@ def start(config: str | None, daemon: bool) -> None:
     console.print(f"    [yellow]export HTTPS_PROXY=http://{cfg.listen_host}:{cfg.listen_port}[/]")
     console.print(f"    [yellow]export NODE_EXTRA_CA_CERTS={cert_path}[/]  [dim]# for Claude Code[/]")
     console.print()
-    console.print(f"  Outbound action: [cyan]{cfg.outbound.action}[/]  "
-                  f"Checkers: {', '.join(cfg.outbound.enabled_checkers)}")
-    console.print(f"  Model allowlist: {'[green]enabled[/]' if cfg.model_allowlist.enabled else '[dim]disabled[/]'}")
+    console.print(f"  Secrets: [cyan]{cfg.on_secrets_detected}[/]  "
+                  f"PII: [cyan]{cfg.on_pii_detected}[/]")
+    console.print(f"  Model allowlist: {'[green]enabled[/]' if cfg.model_allowlist_enabled else '[dim]disabled[/]'}")
     console.print(f"  Audit log: [dim]{cfg.audit.resolved_path()}[/]")
     if cfg.policy_server.url:
         console.print(f"  Policy server: [cyan]{cfg.policy_server.url}[/]")
@@ -105,9 +105,9 @@ def status() -> None:
     info.add_column("Value")
     info.add_row("Status", "[green]● Running[/]" if running else "[red]○ Stopped[/]")
     info.add_row("Listen", f"{cfg.listen_host}:{cfg.listen_port}")
-    info.add_row("Outbound action", cfg.outbound.action)
-    info.add_row("Inbound action", cfg.inbound.action)
-    info.add_row("Model allowlist", "[green]enabled[/]" if cfg.model_allowlist.enabled else "[dim]disabled[/]")
+    info.add_row("Secrets detected", cfg.on_secrets_detected)
+    info.add_row("PII detected", cfg.on_pii_detected)
+    info.add_row("Model allowlist", "[green]enabled[/]" if cfg.model_allowlist_enabled else "[dim]disabled[/]")
     info.add_row("Policy server", cfg.policy_server.url or "[dim]not configured (free tier)[/]")
     info.add_row("Audit log", str(cfg.audit.resolved_path()))
     console.print(info)
