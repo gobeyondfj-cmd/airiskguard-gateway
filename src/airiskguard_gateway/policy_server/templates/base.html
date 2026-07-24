@@ -92,7 +92,9 @@
     </div>
     <div class="nav-right">
         <span style="font-size:0.78rem;color:var(--dim)">Admin</span>
+        {% if auth_enabled %}
         <a href="/logout" class="nav-logout">Sign out</a>
+        {% endif %}
     </div>
 </nav>
 <main class="page">

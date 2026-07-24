@@ -21,6 +21,13 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.filters["format_number"] = lambda n: "{:,}".format(int(n or 0))
 
+def _render(request, template, context: dict, **kwargs):
+    """Render template with auth_enabled injected automatically."""
+    from airiskguard_gateway.policy_server.admin_auth import get_admin_credentials
+    _, password = get_admin_credentials()
+    context["auth_enabled"] = bool(password)
+    return templates.TemplateResponse(request, template, context, **kwargs)
+
 DEFAULT_MODELS = [
     "claude-sonnet-4-6", "claude-haiku-4-5-20251001",
     "gpt-4o", "gpt-4o-mini", "deepseek-chat",
@@ -36,7 +43,7 @@ async def login_page(request: Request, next: str = "/dashboard", error: str = ""
     _, password = get_admin_credentials()
     if not password:
         return RedirectResponse("/dashboard")
-    return templates.TemplateResponse(request, "login.html", {"next": next, "error": error})
+    return _render(request, "login.html", {"next": next, "error": error})
 
 
 @router.post("/login")
@@ -48,7 +55,7 @@ async def login_submit(
 ):
     token = verify_login(username, password)
     if not token:
-        return templates.TemplateResponse(request, "login.html", {
+        return _render(request, "login.html", {
             "next": next, "error": "Invalid username or password."
         }, status_code=401)
     response = RedirectResponse(next, status_code=303)
@@ -59,8 +66,9 @@ async def login_submit(
 @router.get("/logout")
 async def logout_route(airiskguard_session: Optional[str] = Cookie(default=None)):
     logout(airiskguard_session)
-    resp = RedirectResponse("/login")
-    resp.delete_cookie("airiskguard_session")
+    _, password = get_admin_credentials()
+    resp = RedirectResponse("/login" if password else "/dashboard", status_code=303)
+    resp.delete_cookie("airiskguard_session", path="/")
     return resp
 
 
@@ -76,7 +84,7 @@ async def dashboard(
     _check_auth(airiskguard_session)
     lic = get_license()
     if not lic.valid:
-        return templates.TemplateResponse(request, "unlicensed.html", {"reason": lic.reason})
+        return _render(request, "unlicensed.html", {"reason": lic.reason})
 
     since = _since(hours)
     stats = await _get_stats(db, since)
@@ -85,7 +93,7 @@ async def dashboard(
     top_users = await _get_user_stats(db, since, limit=5)
     user_count = len(set(u["developer"] or u["machine_id"] for u in top_users))
 
-    return templates.TemplateResponse(request, "dashboard.html", {
+    return _render(request, "dashboard.html", {
         "stats": stats, "cost_data": cost_data, "events": events,
         "top_users": top_users, "user_count": user_count,
         "selected_hours": hours,
@@ -107,7 +115,7 @@ async def analytics(
     events = await _get_recent_events(db, limit=100, action=action or None)
     detection_stats = await _get_detection_stats(db, since)
 
-    return templates.TemplateResponse(request, "analytics.html", {
+    return _render(request, "analytics.html", {
         "stats": stats, "cost_data": cost_data, "events": events,
         "detection_stats": detection_stats,
         "selected_hours": hours, "filter_action": action,
@@ -124,7 +132,7 @@ async def users_page(
     _check_auth(airiskguard_session)
     since = _since(hours)
     users = await _get_user_stats(db, since, limit=50)
-    return templates.TemplateResponse(request, "users.html", {
+    return _render(request, "users.html", {
         "users": users, "selected_hours": hours,
     })
 
@@ -168,7 +176,7 @@ async def providers_page(
     for row in rows:
         provider_models.setdefault(row.provider, []).append(row.model)
 
-    return templates.TemplateResponse(request, "providers.html", {
+    return _render(request, "providers.html", {
         "providers": providers, "disabled_providers": disabled,
         "provider_models": provider_models, "saved": saved,
         "monthly_spend": monthly_spend,
@@ -278,7 +286,7 @@ async def policies_page(
     _check_auth(airiskguard_session)
     lic = get_license()
     if not lic.valid:
-        return templates.TemplateResponse(request, "unlicensed.html", {"reason": lic.reason})
+        return _render(request, "unlicensed.html", {"reason": lic.reason})
 
     teams_result = await db.scalars(select(Team).order_by(Team.created_at))
     teams = list(teams_result.all())
@@ -293,7 +301,7 @@ async def policies_page(
         if p:
             policies_by_team[team.id] = {"version": p.version, "model_allowlist": p.model_allowlist}
 
-    return templates.TemplateResponse(request, "policies.html", {
+    return _render(request, "policies.html", {
         "teams": teams, "policies_by_team": policies_by_team,
         "default_models": DEFAULT_MODELS,
     })
@@ -329,7 +337,7 @@ async def save_policy(
     team.slack_webhook_url = slack_webhook_url.strip() or None
     await db.commit()
 
-    return templates.TemplateResponse(request, "policies.html", {
+    return _render(request, "policies.html", {
         "teams": [team],
         "policies_by_team": {team_id: {"version": new_policy.version, "model_allowlist": models}},
         "default_models": DEFAULT_MODELS, "saved": True,
@@ -360,7 +368,7 @@ async def violations_partial(
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse:
     events = await _get_recent_events(db, limit=50, action=action, routed_only=bool(routed))
-    return templates.TemplateResponse(request, "violations.html", {"events": events})
+    return _render(request, "violations.html", {"events": events})
 
 
 @router.get("/dashboard/costs", response_class=HTMLResponse)
@@ -368,7 +376,7 @@ async def costs_partial(request: Request, db: AsyncSession = Depends(get_db)) ->
     since = _since(24)
     stats = await _get_stats(db, since)
     cost_data = await _get_cost_data(db, since)
-    return templates.TemplateResponse(request, "cost_cards.html", {"stats": stats, "cost_data": cost_data})
+    return _render(request, "cost_cards.html", {"stats": stats, "cost_data": cost_data})
 
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
