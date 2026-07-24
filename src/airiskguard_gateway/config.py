@@ -166,17 +166,21 @@ class GatewayConfig(BaseModel):
     on_pii_detected: Literal["block", "redact", "log"] = "redact"
 
     allowed_models: list[str] = Field(default_factory=lambda: [
+        "claude-fable-5",
         "claude-opus-4-8",
+        "claude-sonnet-5",
         "claude-sonnet-4-6",
         "claude-haiku-4-5-20251001",
-        "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku-20241022",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
         "gpt-4o",
         "gpt-4o-mini",
-        "gpt-4-turbo",
-        "deepseek-chat",
-        "moonshot-v1-8k",
-        "glm-4",
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+        "kimi-k3",
+        "glm-4.5",
+        "MiniMax-M3",
     ])
     model_allowlist_enabled: bool = True
     on_disallowed_model: Literal["block", "log"] = "block"

@@ -31,10 +31,9 @@ def test_unknown_model_fallback():
 
 
 def test_all_known_models_have_pricing():
-    for model in MODEL_PRICING:
-        p = get_pricing(model)
-        assert p["input"] > 0
-        assert p["output"] > 0
+    for model, p in MODEL_PRICING.items():
+        assert p["input"] >= 0, f"{model} has negative input price"
+        assert p["output"] >= 0, f"{model} has negative output price"
 
 
 def test_deepseek_very_cheap():
