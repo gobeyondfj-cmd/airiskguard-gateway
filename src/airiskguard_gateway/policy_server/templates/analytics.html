@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Analytics — AIRiskGuard Gateway{% endblock %}
+{% block content %}
+
+<div class="section-header" style="margin-bottom:1.5rem">
+    <div>
+        <h1 style="font-size:1.5rem;font-weight:800;color:white;margin-bottom:0.2rem">Analytics</h1>
+        <p style="font-size:0.85rem;color:var(--muted)">Traffic, cost, and detection breakdown</p>
+    </div>
+    <div class="time-tabs">
+        {% for label, hours in [('Today', 24), ('7d', 168), ('30d', 720), ('90d', 2160)] %}
+        <a href="?hours={{ hours }}" class="time-tab {{ 'active' if selected_hours == hours else '' }}">{{ label }}</a>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Stat row -->
+<div class="stat-grid" style="grid-template-columns:repeat(4,1fr)">
+    <div class="card stat-card">
+        <div class="stat-label">Requests</div>
+        <div class="stat-value" style="color:white">{{ stats.total }}</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-label">Total Cost</div>
+        <div class="stat-value" style="color:var(--cyan)">${{ "%.4f"|format(cost_data.total_cost_usd) }}</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-label">Input Tokens</div>
+        <div class="stat-value" style="color:white;font-size:1.5rem">{{ "{:,}".format(cost_data.total_input_tokens) }}</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-label">Output Tokens</div>
+        <div class="stat-value" style="color:white;font-size:1.5rem">{{ "{:,}".format(cost_data.total_output_tokens) }}</div>
+    </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem">
+
+    <!-- Cost by model -->
+    <div class="card p-5">
+        <div class="section-header">
+            <div class="section-title">Spend by Model</div>
+        </div>
+        {% if cost_data.by_model %}
+        <div class="bar-chart">
+            {% for row in cost_data.by_model %}
+            <div class="bar-row">
+                <span class="bar-label" title="{{ row.model }}">{{ row.model }}</span>
+                <div class="bar-track"><div class="bar-fill" style="width:{{ row.pct }}%"></div></div>
+                <span class="bar-value">${{ "%.4f"|format(row.cost_usd) }}</span>
+                <span class="bar-sub">{{ row.pct }}%</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}<div class="empty">No data</div>{% endif %}
+    </div>
+
+    <!-- Actions breakdown -->
+    <div class="card p-5">
+        <div class="section-header"><div class="section-title">Action Breakdown</div></div>
+        {% set total = stats.total or 1 %}
+        {% for action, count, color in [
+            ('allowed', stats.total - stats.blocked - stats.redacted, '#4ade80'),
+            ('blocked', stats.blocked, '#f87171'),
+            ('redacted', stats.redacted, '#fb923c'),
+            ('routed', cost_data.routed_requests, '#a78bfa'),
+        ] %}
+        {% if count > 0 %}
+        <div class="bar-row" style="margin-bottom:0.75rem">
+            <span class="bar-label">{{ action }}</span>
+            <div class="bar-track"><div class="bar-fill" style="width:{{ (count/total*100)|round(1) }}%;background:{{ color }}"></div></div>
+            <span class="bar-value" style="color:{{ color }}">{{ count }}</span>
+            <span class="bar-sub">{{ (count/total*100)|round(1) }}%</span>
+        </div>
+        {% endif %}
+        {% endfor %}
+
+        <div style="margin-top:1.5rem;padding-top:1rem;border-top:1px solid rgba(255,255,255,0.06)">
+            <div class="section-title" style="margin-bottom:0.75rem">Detection Events</div>
+            {% for row in detection_stats %}
+            <div style="display:flex;justify-content:space-between;padding:0.35rem 0;font-size:0.85rem">
+                <span style="color:var(--muted)">{{ row.category }}</span>
+                <span style="color:white;font-weight:600">{{ row.count }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<!-- Full events table -->
+<div class="card p-5">
+    <div class="section-header">
+        <div class="section-title">All Events</div>
+        <div style="display:flex;gap:0.5rem">
+            <a href="?hours={{ selected_hours }}&action=blocked" class="time-tab {{ 'active' if filter_action == 'blocked' else '' }}" style="font-size:0.75rem">Blocked</a>
+            <a href="?hours={{ selected_hours }}&action=routed" class="time-tab {{ 'active' if filter_action == 'routed' else '' }}" style="font-size:0.75rem">Routed</a>
+            <a href="?hours={{ selected_hours }}" class="time-tab {{ 'active' if not filter_action else '' }}" style="font-size:0.75rem">All</a>
+        </div>
+    </div>
+    {% if events %}
+    <table>
+        <thead><tr>
+            <th>Time</th><th>User</th><th>Provider</th><th>Model</th>
+            <th>Action</th><th>Findings</th><th>Routed to</th><th>Cost</th>
+        </tr></thead>
+        <tbody>
+        {% for e in events %}
+        <tr>
+            <td style="color:var(--muted);font-size:0.78rem;white-space:nowrap">{{ e.timestamp.strftime('%m-%d %H:%M:%S') }}</td>
+            <td style="font-size:0.82rem">{{ (e.event_json_parsed.get('developer','') or e.machine_id)[:18] }}</td>
+            <td style="color:var(--cyan);font-size:0.82rem">{{ e.provider }}</td>
+            <td style="font-family:monospace;font-size:0.78rem">{{ e.model[:24] }}</td>
+            <td><span class="badge badge-{{ e.action_taken }}">{{ e.action_taken }}</span></td>
+            <td style="color:{% if e.findings_count > 0 %}#f87171{% else %}var(--dim){% endif %}">{{ e.findings_count or '—' }}</td>
+            <td style="font-size:0.78rem;color:var(--muted)">{{ e.routed_to or '—' }}</td>
+            <td style="color:var(--cyan);font-size:0.82rem">${{ "%.4f"|format(e.cost_usd or 0) }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}<div class="empty">No events found</div>{% endif %}
+</div>
+
+{% endblock %}

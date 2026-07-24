@@ -4,35 +4,99 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}AIRiskGuard Gateway{% endblock %}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <style>
-        :root { --cyan: #00d4ff; }
-        body { background: #050a14; color: #e2e8f0; font-family: system-ui, sans-serif; }
-        .card { background: rgba(255,255,255,0.03); border: 1px solid rgba(0,212,255,0.15); border-radius: 12px; }
+        :root { --cyan: #00d4ff; --purple: #7c3aed; --bg: #050a14; --surface: #0a1628; --border: rgba(0,212,255,0.15); --text: #e2e8f0; --muted: #7d8fa8; --dim: #4a5568; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html { scroll-behavior: smooth; }
+        body { font-family: "Inter", system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; -webkit-font-smoothing: antialiased; min-height: 100vh; }
+        .card { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; }
         .badge-blocked { background: rgba(220,38,38,0.15); color: #f87171; border: 1px solid rgba(220,38,38,0.3); }
         .badge-allowed { background: rgba(22,163,74,0.1); color: #4ade80; border: 1px solid rgba(22,163,74,0.2); }
         .badge-redacted { background: rgba(234,88,12,0.15); color: #fb923c; border: 1px solid rgba(234,88,12,0.3); }
-        .nav-link { color: #7d8fa8; transition: color 0.2s; }
-        .nav-link:hover { color: #00d4ff; }
-        .htmx-indicator { opacity: 0; transition: opacity 0.2s; }
-        .htmx-request .htmx-indicator { opacity: 1; }
+        .badge-routed { background: rgba(124,58,237,0.15); color: #a78bfa; border: 1px solid rgba(124,58,237,0.3); }
+        /* Nav */
+        nav { position: sticky; top: 0; z-index: 100; background: rgba(5,10,20,0.92); backdrop-filter: blur(16px); border-bottom: 1px solid var(--border); padding: 0.875rem 1.5rem; display: flex; align-items: center; justify-content: space-between; }
+        .nav-logo { display: flex; align-items: center; gap: 0.5rem; font-size: 1.05rem; font-weight: 800; color: white; text-decoration: none; }
+        .nav-logo-icon { width: 26px; height: 26px; background: linear-gradient(135deg, var(--cyan), var(--purple)); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; box-shadow: 0 0 10px rgba(0,212,255,0.35); }
+        .nav-links { display: flex; gap: 0.25rem; align-items: center; }
+        .nav-links a { color: var(--muted); text-decoration: none; font-size: 0.85rem; font-weight: 500; padding: 0.4rem 0.75rem; border-radius: 6px; transition: all 0.15s; }
+        .nav-links a:hover, .nav-links a.active { color: var(--cyan); background: rgba(0,212,255,0.07); }
+        .nav-right { display: flex; align-items: center; gap: 0.75rem; }
+        .nav-logout { color: var(--dim); font-size: 0.8rem; text-decoration: none; padding: 0.35rem 0.75rem; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; transition: all 0.15s; }
+        .nav-logout:hover { color: var(--text); border-color: rgba(255,255,255,0.2); }
+        /* Layout */
+        .page { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
+        /* Time range tabs */
+        .time-tabs { display: flex; gap: 0.25rem; }
+        .time-tab { padding: 0.35rem 0.875rem; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; text-decoration: none; color: var(--muted); border: 1px solid transparent; transition: all 0.15s; }
+        .time-tab:hover { color: var(--cyan); background: rgba(0,212,255,0.06); }
+        .time-tab.active { color: var(--cyan); background: rgba(0,212,255,0.1); border-color: rgba(0,212,255,0.25); }
+        /* Stat cards */
+        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+        .stat-card { padding: 1.25rem 1.5rem; }
+        .stat-label { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 0.35rem; }
+        .stat-value { font-size: 2rem; font-weight: 800; line-height: 1; }
+        .stat-sub { font-size: 0.78rem; color: var(--muted); margin-top: 0.25rem; }
+        /* CSS bar chart */
+        .bar-chart { display: flex; flex-direction: column; gap: 0.75rem; }
+        .bar-row { display: flex; align-items: center; gap: 0.75rem; }
+        .bar-label { width: 180px; min-width: 180px; font-size: 0.82rem; font-family: monospace; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .bar-track { flex: 1; height: 6px; background: rgba(255,255,255,0.05); border-radius: 3px; }
+        .bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--cyan), var(--purple)); min-width: 2px; transition: width 0.4s ease; }
+        .bar-value { width: 80px; text-align: right; font-size: 0.82rem; color: var(--cyan); font-weight: 600; }
+        .bar-sub { width: 60px; text-align: right; font-size: 0.75rem; color: var(--muted); }
+        /* Table */
+        table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+        th { text-align: left; padding: 0.6rem 0.75rem; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid rgba(255,255,255,0.06); }
+        td { padding: 0.65rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.04); color: var(--text); }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: rgba(255,255,255,0.015); }
+        .badge { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
+        /* Toggle switch */
+        .toggle { position: relative; display: inline-block; width: 36px; height: 20px; }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; cursor: pointer; inset: 0; background: rgba(255,255,255,0.1); border-radius: 20px; transition: 0.2s; }
+        .toggle-slider:before { content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s; }
+        .toggle input:checked + .toggle-slider { background: var(--cyan); }
+        .toggle input:checked + .toggle-slider:before { transform: translateX(16px); }
+        /* Form inputs */
+        .form-input { background: #020912; border: 1px solid rgba(0,212,255,0.2); border-radius: 8px; padding: 0.6rem 0.875rem; color: var(--text); font-size: 0.875rem; font-family: inherit; outline: none; width: 100%; transition: border-color 0.2s; }
+        .form-input:focus { border-color: rgba(0,212,255,0.5); }
+        .btn-primary { background: var(--cyan); color: #050a14; border: none; border-radius: 7px; padding: 0.55rem 1.25rem; font-size: 0.875rem; font-weight: 700; cursor: pointer; font-family: inherit; box-shadow: 0 0 14px rgba(0,212,255,0.25); transition: box-shadow 0.2s; }
+        .btn-primary:hover { box-shadow: 0 0 22px rgba(0,212,255,0.45); }
+        .btn-ghost { background: transparent; border: 1px solid rgba(0,212,255,0.25); color: var(--cyan); border-radius: 7px; padding: 0.55rem 1.25rem; font-size: 0.875rem; font-weight: 600; cursor: pointer; font-family: inherit; transition: all 0.2s; }
+        .btn-ghost:hover { background: rgba(0,212,255,0.07); }
+        /* Section header */
+        .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+        .section-title { font-size: 0.95rem; font-weight: 700; color: white; display: flex; align-items: center; gap: 0.5rem; }
+        .section-title::before { content: "▸"; color: var(--cyan); }
+        /* Empty state */
+        .empty { text-align: center; padding: 3rem; color: var(--muted); }
+        /* Responsive */
+        @media (max-width: 768px) { .stat-grid { grid-template-columns: 1fr 1fr; } .bar-label { width: 120px; min-width: 120px; } }
     </style>
 </head>
 <body>
-<nav class="border-b border-cyan-900/30 px-6 py-4 flex items-center justify-between sticky top-0 z-10" style="background:rgba(5,10,20,0.9);backdrop-filter:blur(12px)">
-    <a href="/dashboard" class="flex items-center gap-2 font-bold text-white">
-        <span class="w-7 h-7 rounded-md flex items-center justify-center text-xs font-bold" style="background:linear-gradient(135deg,#00d4ff,#7c3aed)">◆</span>
-        AIRiskGuard <span class="text-cyan-400 font-normal text-sm ml-1">Gateway</span>
+<nav>
+    <a href="/dashboard" class="nav-logo">
+        <div class="nav-logo-icon">◆</div>
+        AIRiskGuard <span style="color:var(--cyan);font-size:0.7rem;font-weight:600;margin-left:2px">GATEWAY</span>
     </a>
-    <div class="flex gap-6 text-sm">
-        <a href="/dashboard" class="nav-link">Dashboard</a>
-        <a href="/dashboard/violations" class="nav-link">Events</a>
-        <a href="/dashboard/policies" class="nav-link">Policies</a>
-        <a href="/docs" class="nav-link">API</a>
+    <div class="nav-links">
+        <a href="/dashboard" class="{{ 'active' if request.url.path == '/dashboard' else '' }}">Overview</a>
+        <a href="/dashboard/analytics" class="{{ 'active' if 'analytics' in request.url.path else '' }}">Analytics</a>
+        <a href="/dashboard/users" class="{{ 'active' if 'users' in request.url.path else '' }}">Users</a>
+        <a href="/dashboard/providers" class="{{ 'active' if 'providers' in request.url.path else '' }}">Providers</a>
+        <a href="/dashboard/policies" class="{{ 'active' if 'policies' in request.url.path else '' }}">Policies</a>
+    </div>
+    <div class="nav-right">
+        <span style="font-size:0.78rem;color:var(--dim)">Admin</span>
+        <a href="/logout" class="nav-logout">Sign out</a>
     </div>
 </nav>
-<main class="max-w-6xl mx-auto px-6 py-8">
+<main class="page">
     {% block content %}{% endblock %}
 </main>
 </body>

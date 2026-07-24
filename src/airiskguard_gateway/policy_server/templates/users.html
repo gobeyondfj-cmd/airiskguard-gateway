@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Users — AIRiskGuard Gateway{% endblock %}
+{% block content %}
+
+<div class="section-header" style="margin-bottom:1.5rem">
+    <div>
+        <h1 style="font-size:1.5rem;font-weight:800;color:white;margin-bottom:0.2rem">Users</h1>
+        <p style="font-size:0.85rem;color:var(--muted)">Per-developer usage, cost, and activity</p>
+    </div>
+    <div class="time-tabs">
+        {% for label, hours in [('Today', 24), ('7d', 168), ('30d', 720), ('90d', 2160)] %}
+        <a href="?hours={{ hours }}" class="time-tab {{ 'active' if selected_hours == hours else '' }}">{{ label }}</a>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- User cost chart -->
+<div class="card p-5" style="margin-bottom:1.5rem">
+    <div class="section-header"><div class="section-title">Cost by Developer</div></div>
+    {% if users %}
+    {% set max_cost = users[0].total_cost if users else 1 %}
+    <div class="bar-chart">
+        {% for u in users %}
+        <div class="bar-row">
+            <span class="bar-label">{{ u.developer or u.machine_id or 'unknown' }}</span>
+            <div class="bar-track">
+                <div class="bar-fill" style="width:{{ (u.total_cost / max_cost * 100) if max_cost else 0 }}%"></div>
+            </div>
+            <span class="bar-value">${{ "%.4f"|format(u.total_cost) }}</span>
+            <span class="bar-sub">{{ u.requests }}req</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}<div class="empty">No user data yet. Make sure developers set their gateway key with a name.</div>{% endif %}
+</div>
+
+<!-- User detail table -->
+<div class="card p-5">
+    <div class="section-header"><div class="section-title">Developer Detail</div></div>
+    {% if users %}
+    <table>
+        <thead><tr>
+            <th>Developer</th><th>Requests</th><th>Total Cost</th>
+            <th>Tokens (in/out)</th><th>Blocked</th><th>Top Model</th>
+        </tr></thead>
+        <tbody>
+        {% for u in users %}
+        <tr>
+            <td style="font-weight:600">{{ u.developer or u.machine_id or 'unknown' }}</td>
+            <td>{{ u.requests }}</td>
+            <td style="color:var(--cyan)">${{ "%.4f"|format(u.total_cost) }}</td>
+            <td style="font-size:0.82rem;color:var(--muted)">
+                {{ "{:,}".format(u.input_tokens) }} / {{ "{:,}".format(u.output_tokens) }}
+            </td>
+            <td style="color:{% if u.blocked > 0 %}#f87171{% else %}var(--dim){% endif %}">
+                {{ u.blocked or '—' }}
+            </td>
+            <td style="font-family:monospace;font-size:0.78rem;color:var(--muted)">{{ u.top_model[:24] if u.top_model else '—' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}<div class="empty">No data</div>{% endif %}
+</div>
+
+{% endblock %}
