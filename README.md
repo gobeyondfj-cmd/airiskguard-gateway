@@ -27,20 +27,27 @@ airiskguard-gateway start         # starts API proxy on localhost:8080
 
 ### Configure your AI tool
 
-**Claude Code** — set `ANTHROPIC_BASE_URL`:
+**Claude Code:**
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic
+export ANTHROPIC_API_KEY=gateway-managed   # SDK requires a value; gateway uses its own key
 ```
 
-**OpenAI Codex CLI** — set `OPENAI_BASE_URL`:
+**OpenAI Codex CLI:**
 ```bash
 export OPENAI_BASE_URL=http://127.0.0.1:8080/openai
+export OPENAI_API_KEY=gateway-managed
 ```
 
 **DeepSeek / Moonshot / GLM / any provider:**
 ```bash
 export OPENAI_BASE_URL=http://127.0.0.1:8080/deepseek   # or /moonshot, /glm, /minimax
+export OPENAI_API_KEY=gateway-managed
 ```
+
+> The placeholder value (`gateway-managed`) satisfies the SDK's requirement that a key exists.
+> The gateway strips it and substitutes the real key configured in `api_keys:` before forwarding.
+> Developers never need the real API keys — the gateway admin manages them centrally.
 
 **Cursor** — use transparent proxy mode:
 ```bash
