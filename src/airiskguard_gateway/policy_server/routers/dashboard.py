@@ -1,20 +1,27 @@
 from __future__ import annotations
 
+import json
+import uuid
 from datetime import datetime, timedelta, UTC
 
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from airiskguard_gateway.policy_server.database import get_db
-from airiskguard_gateway.policy_server.models import AuditEventRecord, Team
-from airiskguard_gateway.policy_server.main import get_license
+from airiskguard_gateway.policy_server.models import AuditEventRecord, Team, Policy
+from airiskguard_gateway.policy_server.license_state import get_license
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+DEFAULT_MODELS = [
+    "claude-sonnet-4-6", "claude-haiku-4-5-20251001",
+    "gpt-4o", "gpt-4o-mini", "deepseek-chat",
+]
 
 router = APIRouter(tags=["dashboard"])
 
@@ -134,3 +141,104 @@ async def _get_recent_events(
         q = q.where(and_(*filters))
     result = await db.scalars(q)
     return list(result.all())
+
+
+@router.get("/dashboard/policies", response_class=HTMLResponse)
+async def policies_page(request: Request, db: AsyncSession = Depends(get_db)) -> HTMLResponse:
+    lic = get_license()
+    if not lic.valid:
+        return templates.TemplateResponse(request, "unlicensed.html", {"reason": lic.reason})
+
+    teams_result = await db.scalars(select(Team).order_by(Team.created_at))
+    teams = list(teams_result.all())
+
+    # Build policies_by_team map
+    policies_by_team: dict[str, dict] = {}
+    for team in teams:
+        policy_result = await db.scalars(
+            select(Policy)
+            .where(Policy.team_id == team.id, Policy.is_active == True)
+            .order_by(Policy.version.desc())
+            .limit(1)
+        )
+        p = policy_result.first()
+        if p:
+            policies_by_team[team.id] = {
+                "version": p.version,
+                "model_allowlist": p.model_allowlist,
+            }
+
+    return templates.TemplateResponse(request, "policies.html", {
+        "teams": teams,
+        "policies_by_team": policies_by_team,
+        "default_models": DEFAULT_MODELS,
+    })
+
+
+@router.post("/dashboard/policies/{team_id}", response_class=HTMLResponse)
+async def save_policy(
+    team_id: str,
+    request: Request,
+    model_allowlist: str = Form(""),
+    slack_webhook_url: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse:
+    team = await db.get(Team, team_id)
+    if not team:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Team not found")
+
+    # Parse model list
+    models = [m.strip() for m in model_allowlist.strip().splitlines() if m.strip()]
+
+    # Deactivate existing active policy
+    existing = await db.scalars(
+        select(Policy).where(Policy.team_id == team_id, Policy.is_active == True)
+    )
+    latest_version = 0
+    for p in existing.all():
+        p.is_active = False
+        latest_version = max(latest_version, p.version)
+
+    # Create new policy version
+    new_policy = Policy(
+        id=str(uuid.uuid4()),
+        team_id=team_id,
+        version=latest_version + 1,
+        rules_json="[]",
+        model_allowlist_json=json.dumps(models),
+        is_active=True,
+    )
+    db.add(new_policy)
+
+    # Update Slack webhook
+    team.slack_webhook_url = slack_webhook_url.strip() or None
+    await db.commit()
+
+    # Re-render the updated card
+    policies_by_team = {
+        team_id: {"version": new_policy.version, "model_allowlist": models}
+    }
+    return templates.TemplateResponse(request, "policies.html", {
+        "teams": [team],
+        "policies_by_team": policies_by_team,
+        "default_models": DEFAULT_MODELS,
+        "saved": True,
+    })
+
+
+@router.post("/dashboard/teams", response_class=HTMLResponse)
+async def create_team_ui(
+    request: Request,
+    name: str = Form(""),
+    slug: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse:
+    if not name or not slug:
+        return RedirectResponse("/dashboard/policies", status_code=303)
+    existing = await db.scalar(select(Team).where(Team.slug == slug))
+    if not existing:
+        team = Team(id=str(uuid.uuid4()), name=name, slug=slug)
+        db.add(team)
+        await db.commit()
+    return RedirectResponse("/dashboard/policies", status_code=303)

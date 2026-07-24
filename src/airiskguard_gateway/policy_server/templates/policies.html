@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Policies — AIRiskGuard Gateway{% endblock %}
+{% block content %}
+
+<div class="mb-8 flex items-center justify-between">
+    <div>
+        <h1 class="text-2xl font-bold text-white mb-1">Policies</h1>
+        <p class="text-sm" style="color:#7d8fa8">Manage team model allowlists and detection rules. Changes push to all connected gateways within 60 seconds.</p>
+    </div>
+</div>
+
+{% if teams %}
+{% for team in teams %}
+<div class="card p-6 mb-6">
+    <div class="flex items-center justify-between mb-4">
+        <div>
+            <h2 class="font-semibold text-white">{{ team.name }}</h2>
+            <span class="text-xs" style="color:#7d8fa8">{{ team.slug }}</span>
+        </div>
+        <span class="text-xs px-2 py-1 rounded" style="background:rgba(0,212,255,0.08);color:#00d4ff">
+            Policy v{{ policies_by_team.get(team.id, {}).get('version', 0) }}
+        </span>
+    </div>
+
+    <!-- Model Allowlist Editor -->
+    <form hx-post="/dashboard/policies/{{ team.id }}" hx-swap="outerHTML" hx-target="closest .card">
+        <div class="mb-4">
+            <label class="text-xs font-semibold mb-2 block" style="color:#7d8fa8;letter-spacing:0.5px;text-transform:uppercase">
+                Allowed Models <span style="color:#7d8fa8;font-weight:400">(one per line)</span>
+            </label>
+            <textarea name="model_allowlist"
+                class="w-full rounded-lg p-3 font-mono text-sm resize-y"
+                style="background:#020912;border:1px solid rgba(0,212,255,0.2);color:#00d4ff;min-height:140px;outline:none"
+                rows="7">{% for m in policies_by_team.get(team.id, {}).get('model_allowlist', default_models) %}{{ m }}
+{% endfor %}</textarea>
+        </div>
+
+        <!-- Slack Webhook -->
+        <div class="mb-4">
+            <label class="text-xs font-semibold mb-2 block" style="color:#7d8fa8;letter-spacing:0.5px;text-transform:uppercase">
+                Slack Webhook URL <span style="color:#7d8fa8;font-weight:400">(alerts on blocked requests)</span>
+            </label>
+            <input name="slack_webhook_url"
+                type="url"
+                placeholder="https://hooks.slack.com/services/..."
+                value="{{ team.slack_webhook_url or '' }}"
+                class="w-full rounded-lg p-3 text-sm"
+                style="background:#020912;border:1px solid rgba(0,212,255,0.2);color:#e2e8f0;outline:none">
+            {% if team.slack_webhook_url %}
+            <p class="text-xs mt-1" style="color:#4ade80">✓ Slack alerts active</p>
+            {% endif %}
+        </div>
+
+        <div class="flex items-center gap-3">
+            <button type="submit"
+                class="px-4 py-2 rounded-lg text-sm font-semibold transition-all"
+                style="background:#00d4ff;color:#050a14;box-shadow:0 0 16px rgba(0,212,255,0.25)">
+                Save &amp; Push Policy
+            </button>
+            <span class="text-xs" style="color:#7d8fa8">Pushes to all gateways in ≤60s</span>
+        </div>
+    </form>
+</div>
+{% endfor %}
+{% else %}
+<div class="card p-12 text-center">
+    <p class="text-lg mb-2" style="color:#7d8fa8">No teams yet</p>
+    <p class="text-sm mb-4" style="color:#4a5568">Create a team first to manage policies.</p>
+    <form hx-post="/dashboard/teams" hx-swap="outerHTML" hx-target="closest .card" class="flex gap-2 justify-center">
+        <input name="name" placeholder="Team name" class="rounded-lg px-3 py-2 text-sm"
+            style="background:#020912;border:1px solid rgba(0,212,255,0.2);color:#e2e8f0;outline:none">
+        <input name="slug" placeholder="slug" class="rounded-lg px-3 py-2 text-sm w-28"
+            style="background:#020912;border:1px solid rgba(0,212,255,0.2);color:#e2e8f0;outline:none">
+        <button type="submit" class="px-4 py-2 rounded-lg text-sm font-semibold"
+            style="background:#00d4ff;color:#050a14">Create Team</button>
+    </form>
+</div>
+{% endif %}
+
+{% endblock %}
