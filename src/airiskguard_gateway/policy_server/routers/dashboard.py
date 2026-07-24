@@ -137,12 +137,26 @@ async def providers_page(
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse:
     _check_auth(airiskguard_session)
-    from airiskguard_gateway.config import GatewayConfig
+    from airiskguard_gateway.config import GatewayConfig, BUILTIN_PROVIDERS
+    from datetime import datetime, UTC
     cfg = GatewayConfig.load()
     providers = cfg.resolved_providers()
-    disabled = set(cfg.providers.get(n, {}).get("disabled", False) and n for n in providers)
+    disabled = set(n for n in providers if cfg.providers.get(n, {}).get("disabled", False))
 
-    # Which models have been seen per provider
+    # Monthly spend from DB
+    now = datetime.now(UTC)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    spend_rows = await db.execute(
+        select(AuditEventRecord.provider,
+               func.sum(AuditEventRecord.cost_usd).label("cost_usd"),
+               func.count(AuditEventRecord.id).label("requests"))
+        .where(AuditEventRecord.timestamp >= month_start)
+        .group_by(AuditEventRecord.provider)
+        .order_by(func.sum(AuditEventRecord.cost_usd).desc())
+    )
+    by_provider = [{"provider": r.provider, "cost_usd": float(r.cost_usd or 0), "requests": r.requests} for r in spend_rows]
+    monthly_spend = {"total_cost_usd": sum(r["cost_usd"] for r in by_provider), "by_provider": by_provider}
+
     provider_models: dict[str, list[str]] = {}
     rows = await db.execute(
         select(AuditEventRecord.provider, AuditEventRecord.model)
@@ -155,7 +169,40 @@ async def providers_page(
     return templates.TemplateResponse(request, "providers.html", {
         "providers": providers, "disabled_providers": disabled,
         "provider_models": provider_models, "saved": saved,
+        "monthly_spend": monthly_spend,
+        "current_month": now.strftime("%B %Y"),
+        "overall_limit": cfg.overall_limit_usd,
+        "per_provider_limits": cfg.per_provider_limits,
+        "on_limit_reached": cfg.on_limit_reached,
+        "provider_names": list(BUILTIN_PROVIDERS.keys()),
     })
+
+
+@router.post("/dashboard/providers/limits")
+async def save_limits(
+    request: Request,
+    overall_limit: float = Form(0.0),
+    on_limit_reached: str = Form("block"),
+    airiskguard_session: Optional[str] = Cookie(default=None),
+) -> RedirectResponse:
+    _check_auth(airiskguard_session)
+    from airiskguard_gateway.config import GatewayConfig, BUILTIN_PROVIDERS
+    cfg = GatewayConfig.load()
+    cfg.overall_limit_usd = max(0.0, overall_limit)
+    cfg.on_limit_reached = on_limit_reached if on_limit_reached in ("block", "alert") else "block"
+
+    form = await request.form()
+    per_limits: dict[str, float] = {}
+    for name in BUILTIN_PROVIDERS:
+        val = str(form.get(f"limit_{name}", "")).strip()
+        if val:
+            try:
+                per_limits[name] = float(val)
+            except ValueError:
+                pass
+    cfg.per_provider_limits = per_limits
+    cfg.save()
+    return RedirectResponse("/dashboard/providers?saved=1", status_code=303)
 
 
 @router.post("/dashboard/providers/save")

@@ -25,6 +25,7 @@ from airiskguard_gateway.proxy.provider import (
 from airiskguard_gateway.routing.classifier import classify
 from airiskguard_gateway.routing.engine import RoutingEngine
 from airiskguard_gateway.routing.models import RoutingDestination
+from airiskguard_gateway.cost_limits import CostLimitChecker
 from airiskguard_gateway.scanner.engine import ScanEngine
 
 log = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ def create_api_server(
     app = FastAPI(title="AIRiskGuard Gateway API Proxy", docs_url=None, redoc_url=None)
     mid = machine_id()
     gw_auth = GatewayAuth(config)
+    cost_checker = CostLimitChecker(config)
 
     if not gw_auth.is_enabled():
         log.warning(
@@ -86,6 +88,21 @@ def create_api_server(
                 content=json.dumps({"error": f"Unknown provider: {provider}. Supported: {list(providers.keys())}"}),
                 status_code=404,
                 media_type="application/json",
+            )
+
+        # ── Cost limit check ─────────────────────────────────────────────
+        allowed, limit_msg = cost_checker.check(provider)
+        if not allowed:
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "type": "cost_limit_exceeded",
+                        "message": limit_msg,
+                    }
+                }),
+                status_code=429,
+                media_type="application/json",
+                headers={"x-airiskguard": "cost-limit"},
             )
 
         # Read body

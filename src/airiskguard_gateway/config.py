@@ -194,6 +194,11 @@ class GatewayConfig(BaseModel):
     # These are merged into the matching provider config at runtime
     api_keys: dict[str, str] = Field(default_factory=dict)
 
+    # Cost limits (0 = disabled, reset monthly)
+    overall_limit_usd: float = 0.0
+    per_provider_limits: dict[str, float] = Field(default_factory=dict)
+    on_limit_reached: str = "block"  # "block" | "alert"
+
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     policy_server: PolicyServerConfig = Field(default_factory=PolicyServerConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
@@ -269,6 +274,14 @@ listen_port: 8080
 # What to do when sensitive data is detected outbound
 on_secrets_detected: block    # block | redact | log
 on_pii_detected: redact       # block | redact | log
+
+# Cost limits (0 = no limit, resets on 1st of each month)
+# overall_limit_usd: 200.00
+# on_limit_reached: block   # block | alert (Slack only)
+# per_provider_limits:
+#   openai: 50.00
+#   anthropic: 100.00
+#   deepseek: 20.00
 
 # Approved model list
 model_allowlist_enabled: true

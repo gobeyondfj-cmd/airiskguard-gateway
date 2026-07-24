@@ -202,3 +202,34 @@ async def _maybe_notify_slack(db: AsyncSession, record: AuditEventRecord, event:
             await client.post(team.slack_webhook_url, json=payload)
     except Exception:
         pass
+
+
+@router.get("/costs/current-month")
+async def current_month_costs(
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Current calendar month spend by provider + total."""
+    now = datetime.now(UTC)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    rows = await db.execute(
+        select(
+            AuditEventRecord.provider,
+            func.sum(AuditEventRecord.cost_usd).label("cost"),
+            func.count(AuditEventRecord.id).label("requests"),
+        )
+        .where(AuditEventRecord.timestamp >= month_start)
+        .group_by(AuditEventRecord.provider)
+        .order_by(func.sum(AuditEventRecord.cost_usd).desc())
+    )
+    by_provider = [
+        {"provider": r.provider, "cost_usd": round(float(r.cost or 0), 6), "requests": r.requests}
+        for r in rows
+    ]
+    total = sum(r["cost_usd"] for r in by_provider)
+
+    return {
+        "month": now.strftime("%Y-%m"),
+        "total_cost_usd": round(total, 6),
+        "by_provider": by_provider,
+    }
