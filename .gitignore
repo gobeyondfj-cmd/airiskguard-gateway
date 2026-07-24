@@ -32,3 +32,4 @@ htmlcov/
 
 # mypy
 .mypy_cache/
+*.db
