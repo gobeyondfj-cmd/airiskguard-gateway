@@ -71,6 +71,7 @@ def start(config: str | None, daemon: bool, mode: str) -> None:
     if mode == "api":
         import uvicorn
         from airiskguard_gateway.audit.logger import AuditLogger
+        from airiskguard_gateway.auth import GatewayAuth
         from airiskguard_gateway.policy.engine import PolicyEngine
         from airiskguard_gateway.routing.engine import RoutingEngine
         from airiskguard_gateway.scanner.engine import ScanEngine
@@ -85,6 +86,13 @@ def start(config: str | None, daemon: bool, mode: str) -> None:
             sticky_sessions=cfg.routing.sticky_sessions,
             session_ttl_hours=cfg.routing.session_ttl_hours,
         )
+
+        auth = GatewayAuth(cfg)
+        if not auth.is_enabled():
+            console.print("[bold yellow]⚠  No gateway key configured — open access.[/]")
+            console.print("  Run [cyan]airiskguard-gateway keygen[/] to create a key, then set it in config.yaml.")
+            console.print()
+
         app = create_api_server(cfg, logger, scanner, policy, router)
         try:
             uvicorn.run(app, host=cfg.listen_host, port=cfg.listen_port, log_level="warning")
@@ -319,7 +327,35 @@ def install_cert() -> None:
     console.print(f"\n[green]Done.[/] Set [yellow]NODE_EXTRA_CA_CERTS={cert_mgr.cert_pem_path()}[/] for Claude Code.")
 
 
-@main.command("keys")
+@main.command("keygen")
+@click.option("--name", default="", help="Developer name or email for this key")
+@click.option("--team", default="", help="Team name for this key")
+def keygen(name: str, team: str) -> None:
+    """Generate a new gateway API key."""
+    from airiskguard_gateway.auth import generate_gateway_key
+    key = generate_gateway_key()
+    console.print(f"\n[bold]New Gateway Key:[/]")
+    console.print(f"  [cyan]{key}[/]")
+    console.print()
+    console.print("[dim]Add to your gateway config:[/]")
+    console.print(f"  [yellow]gateway_key: {key}[/]  [dim]# single shared key[/]")
+    console.print()
+    console.print("[dim]Or for per-developer keys, add to your keys file:[/]")
+    line = f"key={key}"
+    if name:
+        line += f"  name={name}"
+    if team:
+        line += f"  team={team}"
+    console.print(f"  [yellow]{line}[/]")
+    console.print()
+    console.print("[dim]Client sets:[/]")
+    console.print(f"  [yellow]export ANTHROPIC_API_KEY={key}[/]")
+    console.print(f"  [yellow]export ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic[/]")
+    console.print()
+    console.print("[bold red]Keep this key secret.[/] It grants access to your gateway.")
+
+
+
 def keys_cmd() -> None:
     """Show API key status for all configured providers."""
     from airiskguard_gateway.config import BUILTIN_PROVIDERS

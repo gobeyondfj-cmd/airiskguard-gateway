@@ -30,24 +30,24 @@ airiskguard-gateway start         # starts API proxy on localhost:8080
 **Claude Code:**
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8080/anthropic
-export ANTHROPIC_API_KEY=gateway-managed   # SDK requires a value; gateway uses its own key
+export ANTHROPIC_API_KEY=gw-your-gateway-key   # gateway key, not Anthropic key
 ```
 
 **OpenAI Codex CLI:**
 ```bash
 export OPENAI_BASE_URL=http://127.0.0.1:8080/openai
-export OPENAI_API_KEY=gateway-managed
+export OPENAI_API_KEY=gw-your-gateway-key
 ```
 
 **DeepSeek / Moonshot / GLM / any provider:**
 ```bash
 export OPENAI_BASE_URL=http://127.0.0.1:8080/deepseek   # or /moonshot, /glm, /minimax
-export OPENAI_API_KEY=gateway-managed
+export OPENAI_API_KEY=gw-your-gateway-key
 ```
 
-> The placeholder value (`gateway-managed`) satisfies the SDK's requirement that a key exists.
-> The gateway strips it and substitutes the real key configured in `api_keys:` before forwarding.
-> Developers never need the real API keys — the gateway admin manages them centrally.
+> The gateway key (`gw-...`) is issued by the gateway admin via `airiskguard-gateway keygen`.
+> Developers never need the real provider API keys — the gateway holds them centrally.
+> If no gateway key is configured, access is open (fine for single-machine use).
 
 **Cursor** — use transparent proxy mode:
 ```bash
@@ -62,6 +62,50 @@ airiskguard-gateway start --mode proxy
 airiskguard-gateway logs --tail 5
 # You should see your AI requests appear here
 ```
+
+---
+
+## Gateway Authentication
+
+Without a gateway key, anyone who can reach `localhost:8080` can use your AI API keys. Set one before deploying to a shared host.
+
+### Free tier — single shared key
+
+```bash
+# 1. Generate a key
+airiskguard-gateway keygen
+
+# 2. Add to config.yaml
+gateway_key: gw-your-generated-key
+
+# 3. Each developer sets it as their ANTHROPIC_API_KEY
+export ANTHROPIC_API_KEY=gw-your-generated-key
+export ANTHROPIC_BASE_URL=http://gateway-host:8080/anthropic
+```
+
+The gateway validates the key on every request. If it doesn't match, the request gets a 401.
+
+### Team tier — per-developer keys
+
+```bash
+# Generate a key per developer
+airiskguard-gateway keygen --name john@company.com --team engineering
+airiskguard-gateway keygen --name jane@company.com --team data
+```
+
+Create a keys file (`/etc/airiskguard/keys.txt`):
+```
+# Gateway keys
+key=gw-abc123  name=john@company.com  team=engineering
+key=gw-xyz789  name=jane@company.com  team=data
+```
+
+Set in config:
+```yaml
+gateway_keys_file: /etc/airiskguard/keys.txt
+```
+
+Each developer uses their own key. The audit log shows who made each request. Revoke by removing the line.
 
 ---
 

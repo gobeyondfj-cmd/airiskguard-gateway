@@ -184,6 +184,12 @@ class GatewayConfig(BaseModel):
     # Provider registry — built-ins merged with any user overrides
     providers: dict[str, dict] = Field(default_factory=dict)
 
+    # Gateway authentication
+    # Free tier: single shared key — set AIRISKGUARD_GATEWAY_KEY env var or here
+    gateway_key: str = ""
+    # Team tier: path to a keys file with per-developer keys
+    gateway_keys_file: str = ""
+
     # Inline API keys — alternative to env vars
     # These are merged into the matching provider config at runtime
     api_keys: dict[str, str] = Field(default_factory=dict)
@@ -243,6 +249,23 @@ DEFAULT_CONFIG_YAML = """\
 listen_host: "127.0.0.1"
 listen_port: 8080
 
+# Gateway Authentication
+# Without this, anyone who can reach the gateway can use it.
+#
+# Free tier — single shared key for your team:
+#   Option 1: env var (recommended)
+#     export AIRISKGUARD_GATEWAY_KEY=gw-your-secret-key
+#   Option 2: inline here
+# gateway_key: gw-your-secret-key
+#
+# Team tier — per-developer keys (one per line in a text file):
+#   gateway_keys_file: /etc/airiskguard/keys.txt
+#   Keys file format:
+#     key=gw-abc123  name=john@company.com  team=engineering
+#     key=gw-xyz789  name=jane@company.com  team=data
+#
+# Generate a key: airiskguard-gateway keygen
+
 # What to do when sensitive data is detected outbound
 on_secrets_detected: block    # block | redact | log
 on_pii_detected: redact       # block | redact | log
@@ -258,30 +281,20 @@ allowed_models:
   - deepseek-chat
   - moonshot-v1-8k
 
-# API Keys
-# Option 1 (recommended): set env vars in your shell
+# API Keys (real provider keys — only needed on the gateway machine)
+# Option 1 (recommended): env vars
 #   export ANTHROPIC_API_KEY=sk-ant-...
 #   export OPENAI_API_KEY=sk-...
 #   export DEEPSEEK_API_KEY=sk-...
-#   export MOONSHOT_API_KEY=sk-...
-#   export GLM_API_KEY=...
-#   export MINIMAX_API_KEY=...
-#   export MISTRAL_API_KEY=sk-...
-#
-# Option 2: set inline here (env var takes priority if both are set)
+# Option 2: inline (env var takes priority)
 # api_keys:
 #   anthropic: sk-ant-...
 #   openai: sk-...
 #   deepseek: sk-...
-#   moonshot: sk-...
-#   glm: ...
-#   minimax: ...
-#   mistral: sk-...
 
-# Smart routing rules — evaluated in order, first match wins
+# Smart routing rules
 # routing:
 #   sticky_sessions: true
-#   session_ttl_hours: 24
 #   rules:
 #     - match: contains_pii
 #       action: route_to
@@ -290,10 +303,6 @@ allowed_models:
 #       task_type: simple_qa
 #       action: route_to
 #       destination: deepseek_cheap
-#     - match: model_pattern
-#       model_pattern: "gpt-4*"
-#       action: route_to
-#       destination: gpt_mini
 #   destinations:
 #     local_ollama:
 #       provider: ollama
@@ -301,9 +310,6 @@ allowed_models:
 #     deepseek_cheap:
 #       provider: deepseek
 #       model: deepseek-chat
-#     gpt_mini:
-#       provider: openai
-#       model: gpt-4o-mini
 
 # Team tier
 policy_server:

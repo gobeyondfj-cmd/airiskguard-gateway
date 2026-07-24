@@ -10,6 +10,7 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
+from airiskguard_gateway.auth import GatewayAuth
 from airiskguard_gateway.audit.logger import AuditEvent, AuditLogger
 from airiskguard_gateway.config import GatewayConfig, machine_id
 from airiskguard_gateway.costs import calculate_cost
@@ -48,18 +49,36 @@ def create_api_server(
     policy: PolicyEngine,
     router: RoutingEngine,
 ) -> FastAPI:
-    """
-    FastAPI app that acts as a drop-in API proxy.
-    Set ANTHROPIC_BASE_URL=http://localhost:8080/anthropic
-    or  OPENAI_BASE_URL=http://localhost:8080/openai
-    """
     app = FastAPI(title="AIRiskGuard Gateway API Proxy", docs_url=None, redoc_url=None)
     mid = machine_id()
+    gw_auth = GatewayAuth(config)
+
+    if not gw_auth.is_enabled():
+        log.warning(
+            "⚠️  Gateway authentication is DISABLED — anyone who can reach this "
+            "gateway can use it. Set AIRISKGUARD_GATEWAY_KEY or gateway_key in config.yaml."
+        )
 
     @app.api_route("/{provider}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
     async def proxy(provider: str, path: str, request: Request) -> Response:
-        start = time.monotonic()
+        # ── Auth ─────────────────────────────────────────────────────────
+        client_key = request.headers.get("x-api-key") or request.headers.get("authorization", "")
+        identity = gw_auth.validate(client_key)
+        if identity is None:
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "type": "authentication_error",
+                        "message": "Invalid or missing gateway API key. "
+                                   "Set ANTHROPIC_API_KEY=<your-gateway-key> on the client.",
+                    }
+                }),
+                status_code=401,
+                media_type="application/json",
+                headers={"x-airiskguard": "unauthorized"},
+            )
 
+        start = time.monotonic()
         providers = config.resolved_providers()
         provider_cfg = providers.get(provider)
         if not provider_cfg:
@@ -170,9 +189,12 @@ def create_api_server(
 
         _log(logger, mid, ctx, "outbound", "routed" if routed_to else "allowed",
              findings, request_id, routed_to=routed_to,
-             task_type=signals.task_type.value, complexity=signals.complexity.value)
+             task_type=signals.task_type.value, complexity=signals.complexity.value,
+             developer=identity.name or identity.key_id)
         if inbound_findings:
             _log(logger, mid, ctx, "inbound", "allowed", inbound_findings, request_id,
+                 input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost,
+                 latency_ms=latency, developer=identity.name or identity.key_id)
                  input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost, latency_ms=latency)
 
         return Response(
