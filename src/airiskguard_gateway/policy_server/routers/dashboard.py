@@ -138,6 +138,7 @@ async def providers_page(
 ) -> HTMLResponse:
     _check_auth(airiskguard_session)
     from airiskguard_gateway.config import GatewayConfig, BUILTIN_PROVIDERS
+    from airiskguard_gateway.provider_models import PROVIDER_MODELS, TIER_COLORS
     from datetime import datetime, UTC
     cfg = GatewayConfig.load()
     providers = cfg.resolved_providers()
@@ -157,6 +158,7 @@ async def providers_page(
     by_provider = [{"provider": r.provider, "cost_usd": float(r.cost_usd or 0), "requests": r.requests} for r in spend_rows]
     monthly_spend = {"total_cost_usd": sum(r["cost_usd"] for r in by_provider), "by_provider": by_provider}
 
+    # Models seen from usage
     provider_models: dict[str, list[str]] = {}
     rows = await db.execute(
         select(AuditEventRecord.provider, AuditEventRecord.model)
@@ -175,6 +177,9 @@ async def providers_page(
         "per_provider_limits": cfg.per_provider_limits,
         "on_limit_reached": cfg.on_limit_reached,
         "provider_names": list(BUILTIN_PROVIDERS.keys()),
+        "provider_model_catalog": PROVIDER_MODELS,
+        "tier_colors": TIER_COLORS,
+        "allowed_models_set": set(cfg.allowed_models),
     })
 
 
@@ -211,21 +216,54 @@ async def save_providers(
     airiskguard_session: Optional[str] = Cookie(default=None),
 ) -> RedirectResponse:
     _check_auth(airiskguard_session)
-    from airiskguard_gateway.config import GatewayConfig, CONFIG_DIR, BUILTIN_PROVIDERS
+    from airiskguard_gateway.config import GatewayConfig, BUILTIN_PROVIDERS
+    from airiskguard_gateway.provider_models import PROVIDER_MODELS
     cfg = GatewayConfig.load()
-
     form = await request.form()
-    # Update api_keys from form
+
+    # API keys
     for name in BUILTIN_PROVIDERS:
         key_val = str(form.get(f"key_{name}", "")).strip()
-        if key_val and not key_val.endswith("..."):
+        if key_val and not key_val.endswith("...") and len(key_val) > 10:
             cfg.api_keys[name] = key_val
-        # Handle enable/disable
+        # Enable/disable
         enabled = f"enabled_{name}" in form
         if not enabled and name != "ollama":
             cfg.providers.setdefault(name, {})["disabled"] = True
         elif name in cfg.providers:
             cfg.providers[name].pop("disabled", None)
+
+    # Selected model versions — rebuild allowed_models from checkboxes
+    selected_models: list[str] = []
+    for name, models in PROVIDER_MODELS.items():
+        for m in models:
+            if form.get(f"model_{name}") and m["id"] in form.getlist(f"model_{name}"):
+                selected_models.append(m["id"])
+    # Also keep any manually added models not in the catalog
+    catalog_ids = {m["id"] for ms in PROVIDER_MODELS.values() for m in ms}
+    for existing in cfg.allowed_models:
+        if existing not in catalog_ids:
+            selected_models.append(existing)
+    if selected_models:
+        cfg.allowed_models = list(dict.fromkeys(selected_models))  # dedupe, preserve order
+
+    # Cost limits
+    try:
+        overall = float(str(form.get("overall_limit", "0")).strip() or "0")
+        cfg.overall_limit_usd = max(0.0, overall)
+    except ValueError:
+        pass
+    action = str(form.get("on_limit_reached", "block"))
+    cfg.on_limit_reached = action if action in ("block", "alert") else "block"
+    per_limits: dict[str, float] = {}
+    for name in BUILTIN_PROVIDERS:
+        val = str(form.get(f"limit_{name}", "")).strip()
+        if val:
+            try:
+                per_limits[name] = float(val)
+            except ValueError:
+                pass
+    cfg.per_provider_limits = per_limits
 
     cfg.save()
     return RedirectResponse("/dashboard/providers?saved=1", status_code=303)

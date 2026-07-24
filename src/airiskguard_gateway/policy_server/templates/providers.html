@@ -5,170 +5,176 @@
 <div class="section-header" style="margin-bottom:1.5rem">
     <div>
         <h1 style="font-size:1.5rem;font-weight:800;color:white;margin-bottom:0.2rem">Providers</h1>
-        <p style="font-size:0.85rem;color:var(--muted)">Configure LLM providers, API keys, cost limits, and availability</p>
+        <p style="font-size:0.85rem;color:var(--muted)">Configure LLM providers, model versions, API keys, and cost limits</p>
     </div>
 </div>
 
-<!-- Cost limits summary -->
+{% if saved %}
+<div style="margin-bottom:1.25rem;background:rgba(74,222,128,0.07);border:1px solid rgba(74,222,128,0.2);border-radius:8px;padding:0.75rem 1rem;color:#4ade80;font-size:0.875rem">
+    ✓ Saved. Restart the gateway for API key changes to take effect.
+</div>
+{% endif %}
+
+<!-- Monthly spend summary -->
 <div class="card p-5" style="margin-bottom:1.5rem">
     <div class="section-header">
         <div class="section-title">This Month's Spend</div>
         <span style="font-size:0.78rem;color:var(--muted)">{{ current_month }}</span>
     </div>
-    <div style="display:flex;align-items:baseline;gap:0.75rem;margin-bottom:1rem">
+    <div style="display:flex;align-items:baseline;gap:0.75rem;margin-bottom:{% if monthly_spend.by_provider %}1rem{% else %}0{% endif %}">
         <span style="font-size:2.5rem;font-weight:800;color:var(--cyan)">${{ "%.4f"|format(monthly_spend.total_cost_usd) }}</span>
         {% if overall_limit > 0 %}
-        <span style="color:var(--muted);font-size:0.9rem">/ ${{ "%.2f"|format(overall_limit) }} limit</span>
-        {% set pct = (monthly_spend.total_cost_usd / overall_limit * 100) if overall_limit else 0 %}
-        <span class="badge {% if pct >= 90 %}badge-blocked{% elif pct >= 70 %}badge-redacted{% else %}badge-allowed{% endif %}" style="font-size:0.75rem">
+        {% set pct = (monthly_spend.total_cost_usd / overall_limit * 100) %}
+        <span style="color:var(--muted)">/ ${{ "%.2f"|format(overall_limit) }}</span>
+        <span class="badge {% if pct >= 90 %}badge-blocked{% elif pct >= 70 %}badge-redacted{% else %}badge-allowed{% endif %}">
             {{ "%.1f"|format(pct) }}% used
         </span>
         {% endif %}
     </div>
     {% if monthly_spend.by_provider %}
     <div class="bar-chart">
-        {% set max_cost = monthly_spend.by_provider[0].cost_usd if monthly_spend.by_provider else 1 %}
+        {% set max_c = monthly_spend.by_provider[0].cost_usd or 0.0001 %}
         {% for row in monthly_spend.by_provider %}
+        {% set limit = per_provider_limits.get(row.provider, 0) %}
         <div class="bar-row">
             <span class="bar-label">{{ row.provider }}</span>
             <div class="bar-track">
-                <div class="bar-fill" style="width:{{ (row.cost_usd / max_cost * 100) if max_cost else 0 }}%"></div>
+                <div class="bar-fill" style="width:{{ (row.cost_usd / max_c * 100)|round(1) }}%;background:{% if limit > 0 and row.cost_usd / limit >= 0.9 %}#f87171{% elif limit > 0 and row.cost_usd / limit >= 0.7 %}#fb923c{% else %}linear-gradient(90deg,var(--cyan),var(--purple)){% endif %}"></div>
             </div>
             <span class="bar-value">${{ "%.4f"|format(row.cost_usd) }}</span>
+            {% if limit > 0 %}
+            <span class="bar-sub" style="color:{% if row.cost_usd/limit >= 0.9 %}#f87171{% else %}var(--muted){% endif %}">${{ "%.0f"|format(limit) }}lim</span>
+            {% else %}
             <span class="bar-sub">{{ row.requests }}req</span>
+            {% endif %}
         </div>
         {% endfor %}
     </div>
-    {% else %}
-    <p style="color:var(--muted);font-size:0.85rem">No spend data yet this month.</p>
     {% endif %}
 </div>
 
-<!-- Cost limits editor -->
-<form method="post" action="/dashboard/providers/limits">
-<div class="card p-5" style="margin-bottom:1.5rem">
-    <div class="section-header">
-        <div class="section-title">Cost Limits</div>
+<form method="post" action="/dashboard/providers/save">
+
+<!-- Per-provider cards -->
+{% for name, p in providers.items() %}
+{% set source, masked = p.key_status() %}
+{% set models_for_provider = provider_model_catalog.get(name, []) %}
+{% set allowed = allowed_models_set %}
+{% set provider_spend = monthly_spend.by_provider | selectattr('provider', 'eq', name) | first | default({'cost_usd': 0, 'requests': 0}) %}
+{% set plimit = per_provider_limits.get(name, 0) %}
+
+<div class="card p-5" style="margin-bottom:1rem">
+    <!-- Header row -->
+    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:{% if models_for_provider %}1rem{% else %}0{% endif %}">
+
+        <!-- Enable toggle -->
+        <label class="toggle" title="Enable/disable this provider">
+            <input type="checkbox" name="enabled_{{ name }}" value="1"
+                   {{ 'checked' if name not in disabled_providers else '' }}
+                   onchange="this.form.submit()">
+            <span class="toggle-slider"></span>
+        </label>
+
+        <!-- Name + key status -->
+        <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+                <span style="font-weight:700;font-size:1rem;color:white">{{ name }}</span>
+                {% if name == 'ollama' %}
+                <span class="badge" style="background:rgba(124,58,237,0.1);color:#a78bfa;border:1px solid rgba(124,58,237,0.2)">local</span>
+                {% elif source in ('env', 'config') %}
+                <span class="badge badge-allowed">✓ key set ({{ source }})</span>
+                {% else %}
+                <span class="badge badge-blocked">✗ no key</span>
+                {% endif %}
+                {% if name in disabled_providers %}
+                <span class="badge" style="background:rgba(255,255,255,0.05);color:var(--dim);border:1px solid rgba(255,255,255,0.08)">disabled</span>
+                {% endif %}
+            </div>
+            <div style="font-size:0.75rem;color:var(--dim);margin-top:0.15rem">{{ p.base_url }}</div>
+        </div>
+
+        <!-- This month's spend -->
+        <div style="text-align:right;min-width:100px">
+            <div style="font-size:0.9rem;font-weight:700;color:var(--cyan)">${{ "%.4f"|format(provider_spend.cost_usd) }}</div>
+            {% if plimit > 0 %}
+            {% set pp = (provider_spend.cost_usd / plimit * 100) %}
+            <div style="font-size:0.72rem;color:{% if pp >= 90 %}#f87171{% elif pp >= 70 %}#fb923c{% else %}var(--muted){% endif %}">
+                / ${{ "%.2f"|format(plimit) }} ({{ "%.0f"|format(pp) }}%)
+            </div>
+            {% else %}
+            <div style="font-size:0.72rem;color:var(--dim)">{{ provider_spend.requests }} req</div>
+            {% endif %}
+        </div>
+
+        <!-- API key input -->
+        {% if name != 'ollama' %}
+        <input type="password" name="key_{{ name }}"
+               class="form-input" style="font-family:monospace;font-size:0.8rem;width:220px;flex-shrink:0"
+               placeholder="{{ masked if source == 'config' else (p.api_key_env or 'API key') }}"
+               autocomplete="off">
+        {% endif %}
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.25rem">
-        <div>
-            <label style="display:block;font-size:0.75rem;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem">
-                Overall Monthly Limit (USD)
+
+    <!-- Model version checkboxes -->
+    {% if models_for_provider %}
+    <div style="border-top:1px solid rgba(255,255,255,0.05);padding-top:0.875rem">
+        <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;color:var(--muted);margin-bottom:0.6rem">
+            Allowed Models
+            <span style="font-weight:400;text-transform:none;letter-spacing:0;margin-left:0.4rem">
+                ({{ models_for_provider | selectattr('id', 'in', allowed) | list | length }} / {{ models_for_provider | length }} selected)
+            </span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.4rem">
+            {% for model in models_for_provider %}
+            {% set tier_style = tier_colors.get(model.tier, tier_colors.standard) %}
+            <label style="display:flex;align-items:center;gap:0.4rem;padding:0.3rem 0.625rem;border-radius:6px;cursor:pointer;border:1px solid {% if model.id in allowed %}{{ tier_style.border }}{% else %}rgba(255,255,255,0.07){% endif %};background:{% if model.id in allowed %}{{ tier_style.bg }}{% else %}transparent{% endif %};transition:all 0.15s" title="{{ model.id }}">
+                <input type="checkbox" name="model_{{ name }}" value="{{ model.id }}"
+                       {{ 'checked' if model.id in allowed else '' }}
+                       style="width:12px;height:12px;accent-color:{{ tier_style.color }};cursor:pointer">
+                <span style="font-size:0.8rem;color:{% if model.id in allowed %}{{ tier_style.color }}{% else %}var(--muted){% endif %}">{{ model.label }}</span>
+                <span style="font-size:0.68rem;opacity:0.6;color:{{ tier_style.color }}">{{ model.tier }}</span>
             </label>
-            <div style="display:flex;align-items:center;gap:0.5rem">
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+
+<!-- Cost limits -->
+<div class="card p-5" style="margin-bottom:1.5rem">
+    <div class="section-header"><div class="section-title">Cost Limits</div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:1rem;margin-bottom:1rem">
+        <div>
+            <label style="display:block;font-size:0.72rem;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem">Overall / Month (USD)</label>
+            <div style="display:flex;align-items:center;gap:0.4rem">
                 <span style="color:var(--muted)">$</span>
-                <input type="number" name="overall_limit" min="0" step="0.01"
-                       value="{{ overall_limit if overall_limit > 0 else '' }}"
-                       placeholder="0 = no limit"
-                       class="form-input" style="max-width:140px">
+                <input type="number" name="overall_limit" min="0" step="1" value="{{ overall_limit if overall_limit > 0 else '' }}" placeholder="no limit" class="form-input" style="max-width:120px">
             </div>
         </div>
         <div>
-            <label style="display:block;font-size:0.75rem;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem">
-                On Limit Reached
-            </label>
+            <label style="display:block;font-size:0.72rem;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem">On Limit Reached</label>
             <select name="on_limit_reached" class="form-input" style="max-width:160px">
                 <option value="block" {{ 'selected' if on_limit_reached == 'block' else '' }}>Block requests</option>
                 <option value="alert" {{ 'selected' if on_limit_reached == 'alert' else '' }}>Alert only (Slack)</option>
             </select>
         </div>
-    </div>
-
-    <div style="margin-bottom:1rem">
-        <label style="display:block;font-size:0.75rem;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;color:var(--muted);margin-bottom:0.75rem">
-            Per-Provider Limits (USD/month)
-        </label>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:0.75rem">
-            {% for name in provider_names %}
-            {% if name != 'ollama' %}
-            <div style="display:flex;align-items:center;gap:0.5rem">
-                <span style="width:90px;font-size:0.85rem;color:var(--text)">{{ name }}</span>
-                <span style="color:var(--muted);font-size:0.85rem">$</span>
-                <input type="number" name="limit_{{ name }}" min="0" step="0.01"
-                       value="{{ per_provider_limits.get(name, '') or '' }}"
-                       placeholder="no limit"
-                       class="form-input" style="max-width:100px;font-size:0.85rem">
+        {% for name, p in providers.items() %}{% if name != 'ollama' %}
+        <div>
+            <label style="display:block;font-size:0.72rem;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;color:var(--muted);margin-bottom:0.4rem">{{ name }} / Month</label>
+            <div style="display:flex;align-items:center;gap:0.4rem">
+                <span style="color:var(--muted)">$</span>
+                <input type="number" name="limit_{{ name }}" min="0" step="1" value="{{ per_provider_limits.get(name, '') or '' }}" placeholder="no limit" class="form-input" style="max-width:120px">
             </div>
-            {% endif %}
-            {% endfor %}
         </div>
+        {% endif %}{% endfor %}
     </div>
+</div>
 
-    <button type="submit" class="btn-primary">Save Limits</button>
+<div style="display:flex;gap:0.75rem;align-items:center">
+    <button type="submit" class="btn-primary">Save All Settings</button>
+    <span style="font-size:0.8rem;color:var(--dim)">Model changes apply immediately. API key changes require gateway restart.</span>
 </div>
 </form>
-
-<!-- Provider API keys -->
-<form method="post" action="/dashboard/providers/save">
-<div style="display:flex;flex-direction:column;gap:0.75rem;margin-bottom:1.5rem">
-    {% for name, p in providers.items() %}
-    {% set source, masked = p.key_status() %}
-    {% set provider_spend = monthly_spend.by_provider | selectattr('provider', 'eq', name) | first | default({'cost_usd': 0, 'requests': 0}) %}
-    {% set limit = per_provider_limits.get(name, 0) %}
-    <div class="card p-4">
-        <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
-
-            <!-- Toggle -->
-            <label class="toggle">
-                <input type="checkbox" name="enabled_{{ name }}" value="1"
-                       {{ 'checked' if name not in disabled_providers else '' }}
-                       onchange="this.form.submit()">
-                <span class="toggle-slider"></span>
-            </label>
-
-            <!-- Name + status -->
-            <div style="min-width:120px">
-                <div style="display:flex;align-items:center;gap:0.5rem">
-                    <span style="font-weight:700;color:white">{{ name }}</span>
-                    {% if source == 'missing' and name != 'ollama' %}
-                    <span class="badge badge-blocked" style="font-size:0.7rem">no key</span>
-                    {% elif source != 'missing' %}
-                    <span class="badge badge-allowed" style="font-size:0.7rem">✓ {{ source }}</span>
-                    {% endif %}
-                </div>
-                <div style="font-size:0.75rem;color:var(--dim)">{{ p.base_url[:40] }}</div>
-            </div>
-
-            <!-- This month spend + limit -->
-            <div style="margin-left:auto;text-align:right;min-width:120px">
-                <div style="font-size:0.85rem;color:var(--cyan)">${{ "%.4f"|format(provider_spend.cost_usd) }}</div>
-                {% if limit > 0 %}
-                {% set pct = (provider_spend.cost_usd / limit * 100) %}
-                <div style="font-size:0.75rem;color:{% if pct >= 90 %}#f87171{% elif pct >= 70 %}#fb923c{% else %}var(--muted){% endif %}">
-                    ${{ "%.2f"|format(limit) }} limit · {{ "%.0f"|format(pct) }}%
-                </div>
-                {% else %}
-                <div style="font-size:0.75rem;color:var(--dim)">no limit</div>
-                {% endif %}
-            </div>
-
-            <!-- Key input -->
-            {% if name != 'ollama' %}
-            <input type="password" name="key_{{ name }}"
-                   class="form-input" style="font-family:monospace;font-size:0.8rem;max-width:260px"
-                   placeholder="{{ p.api_key_env or 'API key' }}"
-                   autocomplete="off">
-            {% endif %}
-        </div>
-
-        <!-- Models seen -->
-        {% if provider_models.get(name) %}
-        <div style="margin-top:0.6rem;padding-top:0.6rem;border-top:1px solid rgba(255,255,255,0.04);display:flex;flex-wrap:wrap;gap:0.3rem">
-            {% for model in provider_models[name][:8] %}
-            <span style="font-size:0.72rem;font-family:monospace;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:4px;padding:0.15rem 0.4rem;color:var(--dim)">{{ model }}</span>
-            {% endfor %}
-        </div>
-        {% endif %}
-    </div>
-    {% endfor %}
-</div>
-<button type="submit" class="btn-primary">Save API Keys</button>
-</form>
-
-{% if saved %}
-<div style="margin-top:1rem;background:rgba(74,222,128,0.07);border:1px solid rgba(74,222,128,0.2);border-radius:8px;padding:0.75rem 1rem;color:#4ade80;font-size:0.875rem">
-    ✓ Saved. Restart the gateway for API key changes to take effect.
-</div>
-{% endif %}
 
 {% endblock %}
